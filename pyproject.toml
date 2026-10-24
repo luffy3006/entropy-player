@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "entropy-player"
+version = "0.1.0"
+description = "A local music player with history-aware entropy shuffle"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "PyQt6>=6.6",
+    "textual>=0.60",
+    "python-mpv>=1.0.7",
+    "watchdog>=4.0",
+    "mutagen>=1.47",
+]
+
+[project.scripts]
+entropy = "entropy.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["entropy*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
