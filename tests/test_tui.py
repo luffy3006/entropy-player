@@ -1,6 +1,6 @@
 import unittest
 
-from textual.widgets import DataTable
+from textual.widgets import DataTable, Input
 
 from entropy.tui.app import EntropyTUI
 
@@ -61,11 +61,18 @@ class TuiShortcutTests(unittest.IsolatedAsyncioTestCase):
 
             await pilot.press("h")
             await pilot.press("l")
-            self.assertEqual(controller.audio.seek_positions, [15.0, 20.0])
+            await pilot.press("left")
+            await pilot.press("right")
+            self.assertEqual(controller.audio.seek_positions, [15.0, 20.0, 15.0, 20.0])
 
             await pilot.press("-")
             await pilot.press("+")
             self.assertEqual(controller.audio.volume, 50)
+
+            await pilot.press("/")
+            self.assertEqual(app.focused, app.query_one(Input))
+            await pilot.press("escape")
+            self.assertEqual(app.focused, table)
 
 
 if __name__ == "__main__":

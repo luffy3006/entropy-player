@@ -31,6 +31,8 @@ class EntropyTUI(App[None]):
         Binding("up", "move_up", "Up", show=False),
         Binding("j", "move_down", "Down", show=False),
         Binding("k", "move_up", "Up", show=False),
+        Binding("left", "seek_back", "Seek -5s"),
+        Binding("right", "seek_forward", "Seek +5s"),
         Binding("h", "seek_back", "Seek -5s"),
         Binding("l", "seek_forward", "Seek +5s"),
         Binding("-", "volume_down", "Volume -"),
@@ -40,6 +42,7 @@ class EntropyTUI(App[None]):
         Binding("p", "previous_track", "Previous", show=False),
         Binding("m", "mute", "Mute"),
         Binding("/", "focus_search", "Search"),
+        Binding("escape", "focus_library", "Library", show=False),
         Binding("s", "toggle_shuffle", "Shuffle"),
         Binding("q", "quit", "Quit"),
     ]
@@ -110,7 +113,7 @@ class EntropyTUI(App[None]):
         progress = self.query_one("#progress", ProgressBar)
         duration = state["duration"]
         progress.update(total=max(1, int(duration)), progress=min(int(state["position"]), int(duration)) if duration else 0)
-        status = f"{len(tracks)} tracks  |  {format_time(state['position'])} / {format_time(duration)}  |  Space play/pause  h/l seek  -/+ volume  n next  / search"
+        status = f"{len(tracks)} tracks  |  {format_time(state['position'])} / {format_time(duration)}  |  Space play/pause  Left/Right seek  -/+ volume  n next  / search"
         self.query_one("#status", Static).update(status)
 
     def action_move_down(self) -> None:
@@ -150,6 +153,9 @@ class EntropyTUI(App[None]):
 
     def action_focus_search(self) -> None:
         self.query_one("#search", Input).focus()
+
+    def action_focus_library(self) -> None:
+        self.query_one(DataTable).focus()
 
     def action_toggle_shuffle(self) -> None:
         mode = "standard" if self.controller.shuffle_mode == "entropy" else "entropy"
