@@ -20,6 +20,7 @@ class PlayerController:
         self.shuffle_mode = "entropy"
         self.current_id: int | None = None
         self._forced_next: int | None = None
+        self._queued_id: int | None = None
         self._lock = threading.RLock()
         self._listeners: list[Any] = []
         self.audio = audio or AudioEngine(self._on_end_file)
@@ -41,7 +42,7 @@ class PlayerController:
         with self._lock:
             if self.current_id is not None and self.database.get_track(self.current_id) is None:
                 self.current_id = None
-            removed_current = True
+                removed_current = True
         if removed_current:
             self.audio.stop()
             self.next_track()
@@ -72,7 +73,19 @@ class PlayerController:
 
     def _start_track(self, track: dict[str, Any]) -> None:
         self.current_id = int(track["id"])
+        self._queued_id = None
         self.audio.play(track["filepath"])
+        queue_next = getattr(self.audio, "queue_next", None)
+        if queue_next is not None:
+            candidates = self.database.get_tracks()
+            if candidates:
+                queued = self._choose_successor(candidates, self.current_id)
+                if queued is not None:
+                    try:
+                        queue_next(queued["filepath"])
+                    except (OSError, RuntimeError):
+                        return
+                    self._queued_id = int(queued["id"])
 
     def play_pause(self) -> None:
         if self.current_id is None:
@@ -80,6 +93,12 @@ class PlayerController:
         else:
             self.audio.pause()
             self._notify()
+
+    def stop(self) -> None:
+        self.audio.stop()
+        self.current_id = None
+        self._queued_id = None
+        self._notify()
 
     def next_track(self) -> None:
         with self._lock:
@@ -98,11 +117,7 @@ class PlayerController:
                 self.current_id = None
                 self._notify()
                 return
-            if self.shuffle_mode == "standard":
-                choices = [track for track in tracks if track["id"] != current_id] or tracks
-                chosen = random.choice(choices)
-            else:
-                chosen = self.scheduler.choose(tracks, current_id)
+            chosen = self._choose_successor(tracks, current_id)
             if chosen is not None:
                 self._start_track(chosen)
                 self._notify()
@@ -124,13 +139,43 @@ class PlayerController:
             finished_id = self.current_id
             if finished_id is not None and reason == "eof":
                 self.database.record_play(finished_id)
+            if reason == "eof" and self._queued_id is not None:
+                self.current_id, self._queued_id = self._queued_id, None
+                next_track_queued = True
+            else:
+                next_track_queued = False
+                if reason == "eof":
+                    self.current_id = None
         self._notify()
         if reason == "eof":
-            self.current_id = None
-            self.next_track()
+            if next_track_queued:
+                self._queue_current_successor()
+            else:
+                self.next_track()
 
-    def add_watch_folder(self, folder: str) -> str:
-        return self.watcher.add_folder(folder)
+    def _queue_current_successor(self) -> None:
+        if self.current_id is None:
+            return
+        queue_next = getattr(self.audio, "queue_next", None)
+        if queue_next is None:
+            return
+        candidates = self.database.get_tracks()
+        queued = self._choose_successor(candidates, self.current_id)
+        if queued is not None:
+            try:
+                queue_next(queued["filepath"])
+            except (OSError, RuntimeError):
+                return
+            self._queued_id = int(queued["id"])
+
+    def _choose_successor(self, tracks: list[dict[str, Any]], current_id: int | None) -> dict[str, Any] | None:
+        if self.shuffle_mode == "standard":
+            choices = [track for track in tracks if int(track["id"]) != current_id] or tracks
+            return random.choice(choices) if choices else None
+        return self.scheduler.choose(tracks, current_id)
+
+    def add_watch_folder(self, folder: str, playlist_id: int) -> str:
+        return self.watcher.add_folder(folder, playlist_id)
 
     def remove_watch_folder(self, folder: str) -> None:
         self.watcher.remove_folder(folder)
@@ -150,12 +195,25 @@ class PlayerController:
         self._notify()
         return playlist_id
 
+    def delete_playlist(self, playlist_id: int) -> None:
+        self.database.delete_playlist(playlist_id)
+        self.watcher.refresh_folders()
+        self._notify()
+
     def add_track_to_playlist(self, playlist_id: int, track_id: int) -> None:
         self.database.add_to_playlist(playlist_id, track_id)
         self._notify()
 
     def playlist_tracks(self, playlist_id: int) -> list[dict[str, Any]]:
         rows = self.database.get_playlist_tracks(playlist_id)
+        folder_prefixes = [path.rstrip("/") + "/" for path in self.database.get_playlist_folders(playlist_id)]
+        if folder_prefixes:
+            known_ids = {int(row["id"]) for row in rows}
+            rows.extend(
+                row for row in self.database.get_tracks()
+                if int(row["id"]) not in known_ids
+                and any(row["filepath"].startswith(prefix) for prefix in folder_prefixes)
+            )
         for row in rows:
             row["weight"] = track_weight(row)
         percentages = weight_percentages(rows)

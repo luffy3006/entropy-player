@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical
 from textual.widgets import DataTable, Footer, Header, Input, ProgressBar, Static
 
 from entropy.core.controller import PlayerController
@@ -27,6 +27,8 @@ class EntropyTUI(App[None]):
     DataTable > .datatable--header { background: #2b342d; color: #d1e985; }
     """
     BINDINGS = [
+        Binding("down", "move_down", "Down", show=False),
+        Binding("up", "move_up", "Up", show=False),
         Binding("j", "move_down", "Down", show=False),
         Binding("k", "move_up", "Up", show=False),
         Binding("space", "play_pause", "Play/Pause"),
@@ -59,12 +61,17 @@ class EntropyTUI(App[None]):
         table = self.query_one(DataTable)
         table.add_columns("Title", "Artist", "Album", "Time", "Plays", "Skips", "Weight")
         self.refresh_view()
+        table.focus()
         self.set_interval(0.8, self.refresh_view)
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "search":
             self._query = event.value.casefold().strip()
             self.refresh_view()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "search":
+            self.query_one(DataTable).focus()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         try:

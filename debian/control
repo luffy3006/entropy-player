@@ -1,0 +1,15 @@
+Source: entropy-player
+Section: sound
+Priority: optional
+Maintainer: luffy3006 <mojoking4@gmail.com>
+Build-Depends: debhelper-compat (= 13), dh-python, python3-all, python3-build, python3-installer, python3-setuptools, python3-wheel
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+Homepage: https://github.com/luffy3006/entropy-player
+
+Package: entropy-player
+Architecture: all
+Depends: ${misc:Depends}, ${python3:Depends}, mpv, python3-dbus-next, python3-mutagen, python3-mpv, python3-pyqt6, python3-textual, python3-watchdog
+Description: Local music player with history-aware shuffle
+ Entropy Player combines a PyQt6 desktop interface and a Textual terminal
+ interface with watched folders, a local library, and history-aware shuffle.

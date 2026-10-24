@@ -55,6 +55,85 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(self.database.get_playlist_tracks(playlist_id)[0]["id"], self.track_id)
         self.assertEqual(self.database.get_playlists()[0]["track_count"], 1)
 
+    def test_playlist_owns_watched_folders_and_deletion_removes_registration(self):
+        folder = self.root / "playlist-folder"
+        folder.mkdir()
+        audio_path = folder / "folder-track.mp3"
+        audio_path.write_bytes(b"ID3")
+        track_id = self.database.add_track(audio_path)
+        playlist_id = self.database.create_playlist("Road mix")
+        self.database.add_watched_folder(folder, playlist_id)
+        self.assertEqual(self.database.get_playlist_folders(playlist_id), [str(folder.resolve())])
+        self.assertEqual(self.database.get_playlist_tracks(playlist_id), [])
+        controller = PlayerController.__new__(PlayerController)
+        controller.database = self.database
+        controller.scheduler = EntropyScheduler()
+        playlist_tracks = PlayerController.playlist_tracks(controller, playlist_id)
+        self.assertEqual([track["id"] for track in playlist_tracks], [track_id])
+        self.database.delete_playlist(playlist_id)
+        self.assertEqual(self.database.get_watched_folders(), [])
+        self.assertIsNotNone(self.database.get_track(track_id))
+
+    def test_legacy_watched_folders_are_migrated_into_imported_playlist(self):
+        legacy_db = self.root / "legacy.db"
+        folder = self.root / "legacy-folder"
+        folder.mkdir()
+        import sqlite3
+
+        connection = sqlite3.connect(legacy_db)
+        connection.execute("CREATE TABLE watched_folders(path TEXT PRIMARY KEY, date_added REAL NOT NULL)")
+        connection.execute("INSERT INTO watched_folders(path, date_added) VALUES (?, 0)", (str(folder.resolve()),))
+        connection.commit()
+        connection.close()
+        migrated = LibraryDatabase(legacy_db)
+        try:
+            playlist = next(row for row in migrated.get_playlists() if row["name"] == "Imported folders")
+            self.assertEqual(migrated.get_playlist_folders(playlist["id"]), [str(folder.resolve())])
+        finally:
+            migrated.close()
+
+    def test_end_of_track_hands_off_to_prequeued_track(self):
+        second = self.root / "second.mp3"
+        second.write_bytes(b"ID3")
+        second_id = self.database.add_track(second)
+
+        class FakeAudio:
+            time_pos = 60.0
+
+            def __init__(self):
+                self.played = []
+                self.queued = []
+
+            def play(self, filepath):
+                self.played.append(filepath)
+
+            def queue_next(self, filepath):
+                self.queued.append(filepath)
+
+        class FakeWatcher:
+            def start(self):
+                pass
+
+        audio = FakeAudio()
+        controller = PlayerController(database=self.database, audio=audio, watcher=FakeWatcher())
+        controller.play_track(self.track_id)
+        self.assertEqual(audio.queued, [str(second.resolve())])
+        controller._on_end_file("eof")
+        self.assertEqual(controller.current_id, second_id)
+        self.assertEqual(audio.played, [str(self.track_path.resolve())])
+        counts = {row["id"]: row["play_count"] for row in self.database.get_tracks()}
+        self.assertEqual(counts[self.track_id], 1)
+        self.assertEqual(audio.queued[-1], str(self.track_path.resolve()))
+
+    def test_video_containers_are_indexed_as_audio_items(self):
+        for suffix in (".mp4", ".mkv"):
+            media_path = self.root / f"audio-container{suffix}"
+            media_path.write_bytes(b"container")
+            self.assertIsNotNone(self.database.add_track(media_path))
+        indexed_paths = {row["filepath"] for row in self.database.get_tracks()}
+        self.assertIn(str((self.root / "audio-container.mp4").resolve()), indexed_paths)
+        self.assertIn(str((self.root / "audio-container.mkv").resolve()), indexed_paths)
+
     def test_directory_cleanup_uses_a_literal_path_prefix(self):
         library = self.root / "music_100%"
         sibling = self.root / "music_100X"

@@ -12,7 +12,7 @@ class AudioEngine:
             import mpv
         except ImportError as exc:
             raise RuntimeError("python-mpv is required. Install Entropy Player and ensure libmpv is available.") from exc
-        self._player: Any = mpv.MPV()
+        self._player: Any = mpv.MPV(vid="no")
         self._on_end = on_end
         self._player.event_callback("end-file")(self._handle_end_file)
 
@@ -56,6 +56,9 @@ class AudioEngine:
 
     def play(self, filepath: str) -> None:
         self._player.play(filepath)
+
+    def queue_next(self, filepath: str) -> None:
+        self._player.command("loadfile", filepath, "append")
 
     def pause(self) -> None:
         self._player.pause = not self.paused

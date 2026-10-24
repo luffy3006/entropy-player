@@ -63,8 +63,8 @@ class LibraryWatcher:
             if candidate.is_file() and self._is_audio(str(candidate)):
                 self._database.add_track(candidate)
 
-    def add_folder(self, folder: str) -> str:
-        path = self._database.add_watched_folder(folder)
+    def add_folder(self, folder: str, playlist_id: int) -> str:
+        path = self._database.add_watched_folder(folder, playlist_id)
         if path not in self._scheduled:
             self._observer.schedule(self._handler, path, recursive=True)
             self._scheduled.add(path)
@@ -81,6 +81,16 @@ class LibraryWatcher:
             for watched in self._database.get_watched_folders():
                 self._observer.schedule(self._handler, watched, recursive=True)
                 self._scheduled.add(watched)
+        self._on_change()
+
+    def refresh_folders(self) -> None:
+        if self._observer.is_alive():
+            self._observer.unschedule_all()
+        self._scheduled.clear()
+        for folder in self._database.get_watched_folders():
+            if Path(folder).is_dir():
+                self._observer.schedule(self._handler, folder, recursive=True)
+                self._scheduled.add(folder)
         self._on_change()
 
     def start(self) -> None:

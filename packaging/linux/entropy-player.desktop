@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Entropy Player
+GenericName=Music Player
+Comment=Local music player with history-aware shuffle
+Exec=entropy --gui
+TryExec=entropy
+Icon=entropy-player
+Terminal=false
+StartupNotify=true
+Categories=AudioVideo;Player;Audio;
+Keywords=music;audio;player;shuffle;library;

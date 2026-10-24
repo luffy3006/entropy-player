@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-SUPPORTED_FORMATS = {".mp3", ".flac", ".ogg", ".wav"}
+SUPPORTED_FORMATS = {".mp3", ".flac", ".ogg", ".wav", ".mp4", ".mkv"}
 
 
 class LibraryDatabase:
@@ -51,7 +51,8 @@ class LibraryDatabase:
                 );
                 CREATE TABLE IF NOT EXISTS watched_folders (
                     path TEXT PRIMARY KEY,
-                    date_added REAL NOT NULL
+                    date_added REAL NOT NULL,
+                    playlist_id INTEGER REFERENCES playlists(id) ON DELETE CASCADE
                 );
                 CREATE TABLE IF NOT EXISTS playlists (
                     id INTEGER PRIMARY KEY,
@@ -68,6 +69,30 @@ class LibraryDatabase:
                 CREATE INDEX IF NOT EXISTS skips_track_time ON skips(track_id, timestamp);
                 """
             )
+            folder_columns = {
+                row["name"] for row in self._connection.execute("PRAGMA table_info(watched_folders)")
+            }
+            if "playlist_id" not in folder_columns:
+                self._connection.execute(
+                    "ALTER TABLE watched_folders ADD COLUMN playlist_id INTEGER REFERENCES playlists(id) ON DELETE CASCADE"
+                )
+            unassigned = self._connection.execute(
+                "SELECT COUNT(*) FROM watched_folders WHERE playlist_id IS NULL"
+            ).fetchone()[0]
+            if unassigned:
+                playlist = self._connection.execute(
+                    "SELECT id FROM playlists WHERE name = 'Imported folders'"
+                ).fetchone()
+                if playlist is None:
+                    cursor = self._connection.execute(
+                        "INSERT INTO playlists(name, date_added) VALUES ('Imported folders', ?)", (time.time(),)
+                    )
+                    playlist_id = int(cursor.lastrowid)
+                else:
+                    playlist_id = int(playlist["id"])
+                self._connection.execute(
+                    "UPDATE watched_folders SET playlist_id = ? WHERE playlist_id IS NULL", (playlist_id,)
+                )
 
     @staticmethod
     def _metadata(filepath: str) -> dict[str, Any]:
@@ -162,13 +187,15 @@ class LibraryDatabase:
             self._connection.execute("DELETE FROM play_history WHERE track_id = ?", (track_id,))
             self._connection.execute("DELETE FROM skips WHERE track_id = ?", (track_id,))
 
-    def add_watched_folder(self, folder: str | Path) -> str:
+    def add_watched_folder(self, folder: str | Path, playlist_id: int) -> str:
         path = str(Path(folder).expanduser().resolve())
         if not os.path.isdir(path):
             raise ValueError(f"Not a directory: {path}")
         with self._lock, self._connection:
             self._connection.execute(
-                "INSERT OR IGNORE INTO watched_folders(path, date_added) VALUES (?, ?)", (path, time.time())
+                "INSERT INTO watched_folders(path, date_added, playlist_id) VALUES (?, ?, ?) "
+                "ON CONFLICT(path) DO UPDATE SET playlist_id=excluded.playlist_id",
+                (path, time.time(), playlist_id),
             )
         return path
 
@@ -180,6 +207,14 @@ class LibraryDatabase:
     def get_watched_folders(self) -> list[str]:
         with self._lock:
             rows = self._connection.execute("SELECT path FROM watched_folders ORDER BY path COLLATE NOCASE").fetchall()
+        return [str(row["path"]) for row in rows]
+
+    def get_playlist_folders(self, playlist_id: int) -> list[str]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT path FROM watched_folders WHERE playlist_id = ? ORDER BY path COLLATE NOCASE",
+                (playlist_id,),
+            ).fetchall()
         return [str(row["path"]) for row in rows]
 
     def create_playlist(self, name: str) -> int:
@@ -195,11 +230,16 @@ class LibraryDatabase:
     def get_playlists(self) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._connection.execute(
-                """SELECT p.id, p.name, COUNT(pt.track_id) AS track_count
-                   FROM playlists p LEFT JOIN playlist_tracks pt ON pt.playlist_id=p.id
-                   GROUP BY p.id ORDER BY p.name COLLATE NOCASE"""
+                """SELECT p.id, p.name,
+                          (SELECT COUNT(*) FROM playlist_tracks pt WHERE pt.playlist_id=p.id) AS track_count,
+                          (SELECT COUNT(*) FROM watched_folders wf WHERE wf.playlist_id=p.id) AS folder_count
+                   FROM playlists p ORDER BY p.name COLLATE NOCASE"""
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def delete_playlist(self, playlist_id: int) -> None:
+        with self._lock, self._connection:
+            self._connection.execute("DELETE FROM playlists WHERE id = ?", (playlist_id,))
 
     def add_to_playlist(self, playlist_id: int, track_id: int) -> None:
         with self._lock, self._connection:
