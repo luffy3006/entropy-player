@@ -31,6 +31,10 @@ class EntropyTUI(App[None]):
         Binding("up", "move_up", "Up", show=False),
         Binding("j", "move_down", "Down", show=False),
         Binding("k", "move_up", "Up", show=False),
+        Binding("h", "seek_back", "Seek -5s"),
+        Binding("l", "seek_forward", "Seek +5s"),
+        Binding("-", "volume_down", "Volume -"),
+        Binding("+", "volume_up", "Volume +"),
         Binding("space", "play_pause", "Play/Pause"),
         Binding("n", "next_track", "Next"),
         Binding("p", "previous_track", "Previous", show=False),
@@ -84,6 +88,7 @@ class EntropyTUI(App[None]):
         if self._query:
             tracks = [track for track in tracks if self._query in " ".join((track["title"], track["artist"], track["album"])).casefold()]
         table = self.query_one(DataTable)
+        selected_row = table.cursor_row
         table.clear()
         self._last_track_ids = []
         for track in tracks:
@@ -94,15 +99,18 @@ class EntropyTUI(App[None]):
                 str(track["play_count"]), str(track["skip_count"]), f"{track['weight_percent']:.1f}%",
                 key=str(track_id),
             )
+        if self._last_track_ids:
+            table.move_cursor(row=min(max(selected_row, 0), len(self._last_track_ids) - 1))
         state = self.controller.state()
         current = state["current"]
         label = f"NOW PLAYING   {current['artist']}  /  {current['title']}" if current else "NOTHING PLAYING"
-        label += f"    [{state['shuffle_mode'].upper()}]"
+        playback = "PAUSED" if state["paused"] else "PLAYING"
+        label += f"    [{state['shuffle_mode'].upper()}]  {playback}  VOL {state['volume']}%"
         self.query_one("#now-playing", Static).update(label)
         progress = self.query_one("#progress", ProgressBar)
         duration = state["duration"]
         progress.update(total=max(1, int(duration)), progress=min(int(state["position"]), int(duration)) if duration else 0)
-        status = f"{len(tracks)} tracks  |  {format_time(state['position'])} / {format_time(duration)}"
+        status = f"{len(tracks)} tracks  |  {format_time(state['position'])} / {format_time(duration)}  |  Space play/pause  h/l seek  -/+ volume  n next  / search"
         self.query_one("#status", Static).update(status)
 
     def action_move_down(self) -> None:
@@ -114,6 +122,18 @@ class EntropyTUI(App[None]):
         table = self.query_one(DataTable)
         if self._last_track_ids:
             table.move_cursor(row=max(0, table.cursor_row - 1))
+
+    def action_seek_back(self) -> None:
+        self.controller.audio.seek(self.controller.audio.time_pos - 5)
+
+    def action_seek_forward(self) -> None:
+        self.controller.audio.seek(self.controller.audio.time_pos + 5)
+
+    def action_volume_down(self) -> None:
+        self.controller.audio.volume -= 5
+
+    def action_volume_up(self) -> None:
+        self.controller.audio.volume += 5
 
     def action_play_pause(self) -> None:
         self.controller.play_pause()
