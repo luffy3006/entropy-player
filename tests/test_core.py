@@ -1,4 +1,5 @@
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -29,9 +30,22 @@ class CoreTests(unittest.TestCase):
         row = self.database.get_tracks()[0]
         self.assertEqual(row["plays_day"], 1)
         self.assertEqual(row["skip_count"], 1)
-        self.assertAlmostEqual(track_weight(row), 1 / ((1 + 5 + 2 + 0.5) * (1 + 1.5)))
+        self.assertAlmostEqual(row["decayed_skip_count"], 1.0, places=4)
+        smoothed_rate = (row["decayed_skip_count"] + 1) / (row["play_count"] + 5)
+        raw_weight = 1 / ((1 + 5 + 2 + 0.5) * (1 + 4 * (smoothed_rate - 0.2)))
+        self.assertAlmostEqual(track_weight(row), raw_weight ** 0.8)
         self.database.record_skip(self.track_id, 30)
         self.assertEqual(self.database.get_tracks()[0]["skip_count"], 1)
+
+    def test_old_skips_decay_instead_of_remaining_a_lifetime_penalty(self):
+        self.database.record_skip(self.track_id, 5)
+        with self.database._lock, self.database._connection:
+            self.database._connection.execute(
+                "UPDATE skips SET timestamp = ? WHERE track_id = ?",
+                (time.time() - 7 * 86400, self.track_id),
+            )
+        row = self.database.get_tracks()[0]
+        self.assertAlmostEqual(row["decayed_skip_count"], 0.5, places=3)
 
     def test_exclusion_is_soft_and_survives_rescan(self):
         self.database.set_excluded(self.track_id)
@@ -48,6 +62,25 @@ class CoreTests(unittest.TestCase):
         self.assertAlmostEqual(sum(percentages.values()), 100.0)
         chosen = EntropyScheduler().choose(tracks, current_id=self.track_id)
         self.assertEqual(chosen["id"], second_id)
+
+    def test_recent_track_cooldown_and_small_library_relaxation(self):
+        tracks = [{"id": track_id} for track_id in range(1, 7)]
+        scheduler = EntropyScheduler(cooldown=4)
+        eligible = scheduler.eligible_tracks(tracks, current_id=6, recent_ids=[1, 2, 3, 4])
+        self.assertEqual([track["id"] for track in eligible], [5])
+        small_library = tracks[:3]
+        eligible_small = scheduler.eligible_tracks(small_library, current_id=3, recent_ids=[1, 2])
+        self.assertEqual([track["id"] for track in eligible_small], [1])
+
+    def test_global_shuffle_reset_clears_history_but_keeps_tracks(self):
+        self.database.record_play(self.track_id)
+        self.database.record_skip(self.track_id, 5)
+        self.database.reset_shuffle_history()
+        row = self.database.get_tracks()[0]
+        self.assertEqual(row["play_count"], 0)
+        self.assertEqual(row["skip_count"], 0)
+        self.assertEqual(row["decayed_skip_count"], 0)
+        self.assertIsNotNone(self.database.get_track(self.track_id))
 
     def test_playlist_membership(self):
         playlist_id = self.database.create_playlist("Late night")
@@ -73,6 +106,29 @@ class CoreTests(unittest.TestCase):
         self.database.delete_playlist(playlist_id)
         self.assertEqual(self.database.get_watched_folders(), [])
         self.assertIsNotNone(self.database.get_track(track_id))
+
+    def test_shuffle_candidates_are_scoped_to_selected_playlist(self):
+        second = self.root / "outside.mp3"
+        second.write_bytes(b"ID3")
+        outside_id = self.database.add_track(second)
+        playlist_id = self.database.create_playlist("Selected")
+        self.database.add_to_playlist(playlist_id, self.track_id)
+
+        class FakeAudio:
+            time_pos = 0
+
+        class FakeWatcher:
+            def start(self):
+                pass
+
+        controller = PlayerController(database=self.database, audio=FakeAudio(), watcher=FakeWatcher())
+        controller.set_shuffle_playlist(playlist_id)
+        candidate_ids = [track["id"] for track in controller._shuffle_candidates()]
+        self.assertEqual(candidate_ids, [self.track_id])
+        self.assertNotIn(outside_id, candidate_ids)
+        empty_playlist = self.database.create_playlist("Empty")
+        controller.set_shuffle_playlist(empty_playlist)
+        self.assertEqual(controller._shuffle_candidates(), [])
 
     def test_legacy_watched_folders_are_migrated_into_imported_playlist(self):
         legacy_db = self.root / "legacy.db"

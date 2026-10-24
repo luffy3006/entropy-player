@@ -60,6 +60,9 @@ class AudioEngine:
     def queue_next(self, filepath: str) -> None:
         self._player.command("loadfile", filepath, "append")
 
+    def clear_queue(self) -> None:
+        self._player.command("playlist-remove", 1)
+
     def pause(self) -> None:
         self._player.pause = not self.paused
 

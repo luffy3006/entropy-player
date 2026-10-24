@@ -99,6 +99,7 @@ class EntropyWindow(QMainWindow):
         self.navigation.tree.itemClicked.connect(self._navigate)
         self.navigation.add_folder_button.clicked.connect(self._choose_folder)
         self.navigation.add_playlist_button.clicked.connect(self._create_playlist)
+        self.navigation.reset_shuffle_button.clicked.connect(self._reset_shuffle_history)
         self.search.textChanged.connect(self._render_tracks)
         self.theme_selector.currentTextChanged.connect(self._change_theme)
         self.update_button.clicked.connect(lambda: self._start_update_check(manual=True))
@@ -260,21 +261,26 @@ class EntropyWindow(QMainWindow):
         if target == "library":
             self._view, self._active_folder, self._active_playlist_id = "library", None, None
             self.navigation.select_playlist(None)
+            self.controller.set_shuffle_playlist(None)
             self.page_title.setText("LIBRARY")
         elif target == "excluded":
             self._view, self._active_folder, self._active_playlist_id = "excluded", None, None
             self.navigation.select_playlist(None)
+            self.controller.set_shuffle_playlist(None)
             self.page_title.setText("EXCLUDED TRACKS")
         elif isinstance(target, tuple) and target[0] == "folder":
             self._view, self._active_folder, self._active_playlist_id = "folder", target[1], target[2]
             self.navigation.select_playlist(target[2])
+            self.controller.set_shuffle_playlist(int(target[2]))
             self.page_title.setText(item.text(0).upper())
         elif isinstance(target, tuple) and target[0] == "playlist":
             self._view, self._active_folder, self._active_playlist_id = "playlist", None, target[1]
             self.navigation.select_playlist(target[1])
+            self.controller.set_shuffle_playlist(int(target[1]))
             self.page_title.setText(target[2].upper())
         elif target in {"watched", "playlists"}:
             self.navigation.select_playlist(None)
+            self.controller.set_shuffle_playlist(None)
             self.statusBar().showMessage("Choose a watched folder." if target == "watched" else "No playlists yet.", 2500)
         else:
             self.navigation.select_playlist(None)
@@ -326,6 +332,19 @@ class EntropyWindow(QMainWindow):
             except Exception as exc:
                 QMessageBox.warning(self, "Could not create playlist", str(exc))
 
+    def _reset_shuffle_history(self) -> None:
+        answer = QMessageBox.question(
+            self,
+            "Reset shuffle history",
+            "Clear all completed-play and early-skip history? This resets play counts and shuffle weights but keeps your library and playlists.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.controller.reset_shuffle_history()
+            self._render_tracks()
+            self.statusBar().showMessage("Shuffle history reset", 4000)
+
     def _folder_menu(self, position: Any) -> None:
         item = self.navigation.tree.itemAt(position)
         target = item.data(0, Qt.ItemDataRole.UserRole) if item else None
@@ -363,6 +382,7 @@ class EntropyWindow(QMainWindow):
             elif selected == add_folder:
                 self._active_playlist_id = int(target[1])
                 self.navigation.select_playlist(self._active_playlist_id)
+                self.controller.set_shuffle_playlist(self._active_playlist_id)
                 self._choose_folder()
             elif selected == delete:
                 answer = QMessageBox.question(
@@ -378,6 +398,7 @@ class EntropyWindow(QMainWindow):
                         self._view, self._active_playlist_id, self._active_folder = "library", None, None
                         self.page_title.setText("LIBRARY")
                         self.navigation.select_playlist(None)
+                        self.controller.set_shuffle_playlist(None)
                     self._refresh_folders()
                     self._render_tracks()
         elif target is None:

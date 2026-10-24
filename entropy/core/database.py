@@ -156,12 +156,19 @@ class LibraryDatabase:
         query = f"""SELECT t.*,
             (SELECT COUNT(*) FROM play_history h WHERE h.track_id=t.id) AS play_count,
             (SELECT COUNT(*) FROM skips s WHERE s.track_id=t.id) AS skip_count,
+            (SELECT COALESCE(SUM(
+                CASE WHEN (? - s.timestamp) > 0
+                     THEN 1.0 / (1.0 + (? - s.timestamp) / 604800.0)
+                     ELSE 1.0 END
+             ), 0.0) FROM skips s WHERE s.track_id=t.id) AS decayed_skip_count,
             (SELECT COUNT(*) FROM play_history h WHERE h.track_id=t.id AND h.timestamp>=?) AS plays_day,
             (SELECT COUNT(*) FROM play_history h WHERE h.track_id=t.id AND h.timestamp>=?) AS plays_week,
             (SELECT COUNT(*) FROM play_history h WHERE h.track_id=t.id AND h.timestamp>=?) AS plays_month
             FROM tracks t {condition} ORDER BY t.title COLLATE NOCASE"""
         with self._lock:
-            rows = self._connection.execute(query, (now - 86400, now - 604800, now - 2592000)).fetchall()
+            rows = self._connection.execute(
+                query, (now, now, now - 86400, now - 604800, now - 2592000)
+            ).fetchall()
         return [dict(row) for row in rows]
 
     def get_track(self, track_id: int) -> dict[str, Any] | None:
@@ -186,6 +193,19 @@ class LibraryDatabase:
         with self._lock, self._connection:
             self._connection.execute("DELETE FROM play_history WHERE track_id = ?", (track_id,))
             self._connection.execute("DELETE FROM skips WHERE track_id = ?", (track_id,))
+
+    def reset_shuffle_history(self) -> None:
+        with self._lock, self._connection:
+            self._connection.execute("DELETE FROM play_history")
+            self._connection.execute("DELETE FROM skips")
+
+    def recent_played_track_ids(self, limit: int = 12) -> list[int]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT track_id FROM play_history ORDER BY timestamp DESC, id DESC LIMIT ?",
+                (max(0, limit),),
+            ).fetchall()
+        return [int(row["track_id"]) for row in rows]
 
     def add_watched_folder(self, folder: str | Path, playlist_id: int) -> str:
         path = str(Path(folder).expanduser().resolve())

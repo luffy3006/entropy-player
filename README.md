@@ -25,11 +25,11 @@ The SQLite database is stored at `~/.config/entropy/entropy.db`. Play history re
 
 ## Shuffle
 
-Entropy shuffle calculates per-track weight from completed plays in the rolling day, week, and month windows and early skips:
+Entropy shuffle combines rolling play pressure, a time-decaying early-skip rate, a 1.25 temperature, and a four-track recent-play cooldown. Let $N_i$ be completed plays, $R_i$ be the sum of each early skip discounted by $1/(1+age/7 days)$, and $q_i=(R_i+1)/(N_i+5)$ be the smoothed skip rate with a 20% prior. The raw weight is:
 
-$$W_i = \frac{1}{(1 + 5P_{day} + 2P_{week} + 0.5P_{month})(1 + 1.5S_i)}$$
+$$W_i = \left[\frac{1}{(1 + 5P_{day} + 2P_{week} + 0.5P_{month})(1 + 4\max(0, q_i - 0.20))}\right]^{1/1.25}$$
 
-The displayed percentage is the track's current weight normalized across the visible library. The GUI offers both entropy-weighted and standard shuffle; press `s` in the TUI to switch modes.
+The last four played tracks are excluded when alternatives exist; the cooldown relaxes automatically for small libraries. When a playlist is selected, shuffle candidates stay within that playlist. The displayed percentage is each candidate's current weight normalized across the active collection. The GUI offers both entropy-weighted and standard shuffle; press `s` in the TUI to switch modes. The GUI's **Reset shuffle history** action clears completed-play and early-skip history and the in-memory cooldown, while preserving tracks, playlists, and watched folders.
 
 ## Desktop Appearance And Updates
 

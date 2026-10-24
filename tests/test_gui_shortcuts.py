@@ -80,6 +80,12 @@ class FakeController:
     def set_shuffle_mode(self, _mode):
         pass
 
+    def set_shuffle_playlist(self, _playlist_id):
+        pass
+
+    def reset_shuffle_history(self):
+        pass
+
     def close(self):
         pass
 

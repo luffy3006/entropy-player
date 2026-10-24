@@ -90,6 +90,11 @@ class LibraryNavigation(QFrame):
         self.add_playlist_button.setMinimumHeight(36)
         self.add_playlist_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         controls.addWidget(self.add_playlist_button)
+        self.reset_shuffle_button = QPushButton("Reset shuffle history")
+        self.reset_shuffle_button.setObjectName("resetShuffleHistory")
+        self.reset_shuffle_button.setMinimumHeight(34)
+        self.reset_shuffle_button.setToolTip("Clear completed-play and early-skip history used by Entropy shuffle")
+        controls.addWidget(self.reset_shuffle_button)
         layout.addLayout(controls)
 
     def set_playlists(self, playlists: list[dict[str, Any]]) -> None:

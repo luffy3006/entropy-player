@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 import threading
+from collections import deque
 from typing import Any
 
 from entropy.core.audio import AudioEngine
@@ -21,6 +22,8 @@ class PlayerController:
         self.current_id: int | None = None
         self._forced_next: int | None = None
         self._queued_id: int | None = None
+        self._recent_ids: deque[int] = deque(reversed(self.database.recent_played_track_ids()), maxlen=12)
+        self._shuffle_playlist_id: int | None = None
         self._lock = threading.RLock()
         self._listeners: list[Any] = []
         self.audio = audio or AudioEngine(self._on_end_file)
@@ -68,6 +71,7 @@ class PlayerController:
         with self._lock:
             if self.current_id is not None and self.current_id != track_id:
                 self.database.record_skip(self.current_id, self.audio.time_pos)
+                self._remember_recent(self.current_id)
             self._start_track(track)
         self._notify()
 
@@ -77,7 +81,7 @@ class PlayerController:
         self.audio.play(track["filepath"])
         queue_next = getattr(self.audio, "queue_next", None)
         if queue_next is not None:
-            candidates = self.database.get_tracks()
+            candidates = self._shuffle_candidates()
             if candidates:
                 queued = self._choose_successor(candidates, self.current_id)
                 if queued is not None:
@@ -105,6 +109,7 @@ class PlayerController:
             current_id = self.current_id
             if current_id is not None:
                 self.database.record_skip(current_id, self.audio.time_pos)
+                self._remember_recent(current_id)
             if self._forced_next is not None:
                 chosen_id, self._forced_next = self._forced_next, None
                 track = self.database.get_track(chosen_id)
@@ -112,7 +117,7 @@ class PlayerController:
                     self._start_track(track)
                     self._notify()
                 return
-            tracks = self.database.get_tracks()
+            tracks = self._shuffle_candidates()
             if not tracks:
                 self.current_id = None
                 self._notify()
@@ -139,6 +144,7 @@ class PlayerController:
             finished_id = self.current_id
             if finished_id is not None and reason == "eof":
                 self.database.record_play(finished_id)
+                self._remember_recent(finished_id)
             if reason == "eof" and self._queued_id is not None:
                 self.current_id, self._queued_id = self._queued_id, None
                 next_track_queued = True
@@ -159,7 +165,7 @@ class PlayerController:
         queue_next = getattr(self.audio, "queue_next", None)
         if queue_next is None:
             return
-        candidates = self.database.get_tracks()
+        candidates = self._shuffle_candidates()
         queued = self._choose_successor(candidates, self.current_id)
         if queued is not None:
             try:
@@ -169,10 +175,45 @@ class PlayerController:
             self._queued_id = int(queued["id"])
 
     def _choose_successor(self, tracks: list[dict[str, Any]], current_id: int | None) -> dict[str, Any] | None:
+        recent_ids = tuple(self._recent_ids)
         if self.shuffle_mode == "standard":
-            choices = [track for track in tracks if int(track["id"]) != current_id] or tracks
+            choices = self.scheduler.eligible_tracks(tracks, current_id, recent_ids)
             return random.choice(choices) if choices else None
-        return self.scheduler.choose(tracks, current_id)
+        return self.scheduler.choose(tracks, current_id, recent_ids)
+
+    def _remember_recent(self, track_id: int) -> None:
+        if not self._recent_ids or self._recent_ids[-1] != track_id:
+            self._recent_ids.append(track_id)
+
+    def _shuffle_candidates(self) -> list[dict[str, Any]]:
+        if self._shuffle_playlist_id is not None:
+            return self.playlist_tracks(self._shuffle_playlist_id)
+        return self.database.get_tracks()
+
+    def set_shuffle_playlist(self, playlist_id: int | None) -> None:
+        self._shuffle_playlist_id = playlist_id
+        clear_queue = getattr(self.audio, "clear_queue", None)
+        if clear_queue is not None and self.current_id is not None:
+            try:
+                clear_queue()
+            except Exception:
+                pass
+            self._queued_id = None
+            self._queue_current_successor()
+        self._notify()
+
+    def reset_shuffle_history(self) -> None:
+        self.database.reset_shuffle_history()
+        self._recent_ids.clear()
+        clear_queue = getattr(self.audio, "clear_queue", None)
+        if clear_queue is not None:
+            try:
+                clear_queue()
+            except Exception:
+                pass
+            self._queued_id = None
+            self._queue_current_successor()
+        self._notify()
 
     def add_watch_folder(self, folder: str, playlist_id: int) -> str:
         return self.watcher.add_folder(folder, playlist_id)
