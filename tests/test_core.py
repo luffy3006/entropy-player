@@ -2,6 +2,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from entropy.core.database import LibraryDatabase
 from entropy.core.controller import PlayerController
@@ -129,6 +130,28 @@ class CoreTests(unittest.TestCase):
         empty_playlist = self.database.create_playlist("Empty")
         controller.set_shuffle_playlist(empty_playlist)
         self.assertEqual(controller._shuffle_candidates(), [])
+
+    def test_controller_restores_saved_volume(self):
+        second_db = LibraryDatabase(self.root / "volume.db")
+
+        class FakeAudio:
+            volume = 50
+            time_pos = 0
+
+            def close(self):
+                pass
+
+        class FakeWatcher:
+            def start(self):
+                pass
+
+        with patch.dict("os.environ", {"XDG_CONFIG_HOME": str(self.root / "config")}):
+            from entropy.core.preferences import save_volume
+
+            save_volume(73)
+            controller = PlayerController(database=second_db, audio=FakeAudio(), watcher=FakeWatcher())
+            self.assertEqual(controller.audio.volume, 73)
+            second_db.close()
 
     def test_legacy_watched_folders_are_migrated_into_imported_playlist(self):
         legacy_db = self.root / "legacy.db"

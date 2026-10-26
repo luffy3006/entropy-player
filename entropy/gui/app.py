@@ -109,7 +109,7 @@ class EntropyWindow(QMainWindow):
         self.playback.play_pause.clicked.connect(self.controller.play_pause)
         self.playback.next.clicked.connect(self.controller.next_track)
         self.playback.previous.clicked.connect(self.controller.previous_track)
-        self.playback.volume.valueChanged.connect(lambda value: setattr(self.controller.audio, "volume", value))
+        self.playback.volume.valueChanged.connect(self._set_volume)
         self.playback.mode.currentIndexChanged.connect(self._set_shuffle_mode)
         self.playback.scrub.sliderPressed.connect(self._begin_scrub)
         self.playback.scrub.clicked.connect(self._seek_to_slider_value)
@@ -175,8 +175,15 @@ class EntropyWindow(QMainWindow):
             if row >= 0:
                 self.table.selectRow(max(0, min(self.table.rowCount() - 1, row + row_delta)))
             return
-        self.controller.audio.volume = max(0, min(100, self.controller.audio.volume + delta))
+        self._set_volume(max(0, min(100, self.controller.audio.volume + delta)))
         self._update_playback()
+
+    def _set_volume(self, value: int) -> None:
+        set_volume = getattr(self.controller, "set_volume", None)
+        if set_volume is None:
+            self.controller.audio.volume = value
+        else:
+            set_volume(value)
 
     def _set_application_icon(self) -> None:
         icon_paths = [
@@ -301,6 +308,7 @@ class EntropyWindow(QMainWindow):
             tracks = [track for track in tracks if query in " ".join((track["title"], track["artist"], track["album"])).casefold()]
         self._rows = tracks
         self.table.set_tracks(tracks)
+        self.table.set_current_track(getattr(self.controller, "current_id", None))
         self.statusBar().showMessage(f"{len(tracks)} tracks")
 
     def _choose_folder(self) -> None:
@@ -474,6 +482,7 @@ class EntropyWindow(QMainWindow):
     def _update_playback(self) -> None:
         state = self.controller.state()
         current = state["current"]
+        self.table.set_current_track(current["id"] if current else None)
         self._update_waveform_track(current)
         self.playback.track_title.setText(current["title"] if current else "Nothing playing")
         self.playback.track_artist.setText(current["artist"] if current else "Choose a track to begin")

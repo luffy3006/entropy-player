@@ -37,6 +37,7 @@ class FakeController:
         self.database = FakeDatabase()
         self.audio = FakeAudio()
         self.play_pause_count = 0
+        self.current_id = None
         self.shuffle_mode = "entropy"
         self.mpris_enabled = False
 
@@ -59,7 +60,7 @@ class FakeController:
 
     def state(self):
         return {
-            "current": None,
+            "current": next((track for track in self.tracks() if track["id"] == self.current_id), None),
             "position": self.audio.time_pos,
             "duration": self.audio.duration,
             "paused": self.audio.paused,
@@ -70,6 +71,9 @@ class FakeController:
 
     def play_pause(self):
         self.play_pause_count += 1
+
+    def set_volume(self, value):
+        self.audio.volume = max(0, min(100, value))
 
     def next_track(self):
         pass
@@ -165,6 +169,15 @@ class GuiShortcutTests(unittest.TestCase):
         self.app.processEvents()
         widths = [self.window.table.columnWidth(column) for column in range(self.window.table.columnCount())]
         self.assertGreater(widths[0], max(widths[1:]))
+
+    def test_current_track_is_highlighted_in_library(self):
+        self.controller.current_id = 2
+        self.window._update_playback()
+        row = next(row for row in range(self.window.table.rowCount())
+                   if self.window.table.item(row, 0).data(Qt.ItemDataRole.UserRole) == 2)
+        self.assertEqual(self.window.table.item(row, 0).background().color().name(), "#254a36")
+        self.assertEqual(self.window.playback.track_title.text(), "2")
+        self.assertEqual(self.window.playback.track_artist.text(), "Artist")
 
     def test_watched_folders_are_entries_in_single_playlists_section(self):
         navigation = LibraryNavigation()

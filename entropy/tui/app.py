@@ -5,7 +5,9 @@ from __future__ import annotations
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
+from textual.coordinate import Coordinate
 from textual.widgets import DataTable, Footer, Header, Input, ProgressBar, Static
+from rich.text import Text
 
 from entropy.core.controller import PlayerController
 
@@ -92,20 +94,32 @@ class EntropyTUI(App[None]):
             tracks = [track for track in tracks if self._query in " ".join((track["title"], track["artist"], track["album"])).casefold()]
         table = self.query_one(DataTable)
         selected_row = table.cursor_row
-        table.clear()
-        self._last_track_ids = []
-        for track in tracks:
-            track_id = int(track["id"])
-            self._last_track_ids.append(track_id)
-            table.add_row(
-                track["title"], track["artist"], track["album"], format_time(track["duration"]),
-                str(track["play_count"]), str(track["skip_count"]), f"{track['weight_percent']:.1f}%",
-                key=str(track_id),
-            )
-        if self._last_track_ids:
-            table.move_cursor(row=min(max(selected_row, 0), len(self._last_track_ids) - 1))
+        selected_track_id = self._last_track_ids[selected_row] if 0 <= selected_row < len(self._last_track_ids) else None
+        scroll_y = table.scroll_y
         state = self.controller.state()
         current = state["current"]
+        current_id = int(current["id"]) if current else None
+        track_ids = [int(track["id"]) for track in tracks]
+        same_tracks = track_ids == self._last_track_ids
+        if same_tracks:
+            for row, track in enumerate(tracks):
+                self._update_track_row(table, row, track, current_id)
+        else:
+            table.clear()
+            self._last_track_ids = []
+            for track in tracks:
+                track_id = int(track["id"])
+                self._last_track_ids.append(track_id)
+                values = self._track_values(track)
+                style = "bold #c8e36d on #26352b" if track_id == current_id else ""
+                table.add_row(*(Text(value, style=style) for value in values), key=str(track_id))
+            if selected_track_id in self._last_track_ids:
+                selected_row = self._last_track_ids.index(selected_track_id)
+            self._last_track_ids = track_ids
+        if self._last_track_ids:
+            table.move_cursor(row=min(max(selected_row, 0), len(self._last_track_ids) - 1))
+            if not same_tracks:
+                table.scroll_to(y=scroll_y, animate=False, immediate=True)
         label = f"NOW PLAYING   {current['artist']}  /  {current['title']}" if current else "NOTHING PLAYING"
         playback = "PAUSED" if state["paused"] else "PLAYING"
         label += f"    [{state['shuffle_mode'].upper()}]  {playback}  VOL {state['volume']}%"
@@ -115,6 +129,18 @@ class EntropyTUI(App[None]):
         progress.update(total=max(1, int(duration)), progress=min(int(state["position"]), int(duration)) if duration else 0)
         status = f"{len(tracks)} tracks  |  {format_time(state['position'])} / {format_time(duration)}  |  Space play/pause  Left/Right seek  -/+ volume  n next  / search"
         self.query_one("#status", Static).update(status)
+
+    @staticmethod
+    def _track_values(track: dict[str, object]) -> list[str]:
+        return [
+            str(track["title"]), str(track["artist"]), str(track["album"]), format_time(float(track["duration"])),
+            str(track["play_count"]), str(track["skip_count"]), f"{float(track['weight_percent']):.1f}%",
+        ]
+
+    def _update_track_row(self, table: DataTable, row: int, track: dict[str, object], current_id: int | None) -> None:
+        style = "bold #c8e36d on #26352b" if int(track["id"]) == current_id else ""
+        for column, value in enumerate(self._track_values(track)):
+            table.update_cell_at(Coordinate(row, column), Text(value, style=style))
 
     def action_move_down(self) -> None:
         table = self.query_one(DataTable)
@@ -133,10 +159,17 @@ class EntropyTUI(App[None]):
         self.controller.audio.seek(self.controller.audio.time_pos + 5)
 
     def action_volume_down(self) -> None:
-        self.controller.audio.volume -= 5
+        self._set_volume(self.controller.audio.volume - 5)
 
     def action_volume_up(self) -> None:
-        self.controller.audio.volume += 5
+        self._set_volume(self.controller.audio.volume + 5)
+
+    def _set_volume(self, value: int) -> None:
+        set_volume = getattr(self.controller, "set_volume", None)
+        if set_volume is None:
+            self.controller.audio.volume = max(0, min(100, value))
+        else:
+            set_volume(value)
 
     def action_play_pause(self) -> None:
         self.controller.play_pause()

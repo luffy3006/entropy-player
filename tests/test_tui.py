@@ -1,6 +1,7 @@
 import unittest
 
 from textual.widgets import DataTable, Input
+from textual.coordinate import Coordinate
 
 from entropy.tui.app import EntropyTUI
 
@@ -23,6 +24,7 @@ class FakeController:
     def __init__(self):
         self.audio = FakeAudio()
         self.shuffle_mode = "entropy"
+        self.current_id = None
         self._tracks = [
             {"id": index, "title": f"Track {index}", "artist": "Artist", "album": "Album",
              "duration": 120, "play_count": 0, "skip_count": 0, "weight_percent": 100 / 3}
@@ -34,7 +36,7 @@ class FakeController:
 
     def state(self):
         return {
-            "current": None,
+            "current": next((track for track in self._tracks if track["id"] == self.current_id), None),
             "position": self.audio.time_pos,
             "duration": self.audio.duration,
             "paused": self.audio.paused,
@@ -45,6 +47,9 @@ class FakeController:
 
     def close(self):
         pass
+
+    def set_volume(self, value):
+        self.audio.volume = max(0, min(100, value))
 
 
 class TuiShortcutTests(unittest.IsolatedAsyncioTestCase):
@@ -73,6 +78,27 @@ class TuiShortcutTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(app.focused, app.query_one(Input))
             await pilot.press("escape")
             self.assertEqual(app.focused, table)
+
+    async def test_current_track_highlight_and_scroll_survive_refresh(self):
+        controller = FakeController()
+        controller._tracks = [
+            {**track, "id": index, "title": f"Track {index}"}
+            for index, track in enumerate(controller._tracks * 20, start=1)
+        ]
+        controller.current_id = 15
+        app = EntropyTUI(controller)
+        async with app.run_test(size=(100, 24)) as pilot:
+            table = app.query_one(DataTable)
+            await pilot.press(*(["down"] * 20))
+            previous_cursor = table.cursor_row
+            previous_scroll = table.scroll_y
+            highlighted = table.get_cell_at(Coordinate(14, 0))
+            self.assertIn("bold", str(highlighted.style))
+
+            app.refresh_view()
+
+            self.assertEqual(table.cursor_row, previous_cursor)
+            self.assertEqual(table.scroll_y, previous_scroll)
 
 
 if __name__ == "__main__":

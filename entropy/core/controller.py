@@ -9,6 +9,7 @@ from typing import Any
 
 from entropy.core.audio import AudioEngine
 from entropy.core.database import LibraryDatabase
+from entropy.core.preferences import load_volume, save_volume
 from entropy.core.scheduler import EntropyScheduler, track_weight, weight_percentages
 from entropy.core.watcher import LibraryWatcher
 
@@ -27,6 +28,7 @@ class PlayerController:
         self._lock = threading.RLock()
         self._listeners: list[Any] = []
         self.audio = audio or AudioEngine(self._on_end_file)
+        self.audio.volume = load_volume(getattr(self.audio, "volume", 50))
         self.watcher = watcher or LibraryWatcher(self.database, self._library_changed)
         self.watcher.start()
 
@@ -97,6 +99,12 @@ class PlayerController:
         else:
             self.audio.pause()
             self._notify()
+
+    def set_volume(self, volume: int) -> None:
+        value = max(0, min(100, int(volume)))
+        self.audio.volume = value
+        save_volume(value)
+        self._notify()
 
     def stop(self) -> None:
         self.audio.stop()

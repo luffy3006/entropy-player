@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "entropy-player"
-version = "0.1.0"
+version = "0.1.1"
 description = "A local music player with history-aware entropy shuffle"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -18,7 +18,9 @@ class AudioEngine:
 
     def _handle_end_file(self, event: Any) -> None:
         reason = getattr(event, "reason", "unknown")
-        self._on_end(str(reason))
+        if isinstance(reason, int):
+            reason = {0: "eof", 1: "restarted", 2: "aborted", 3: "quit", 4: "error", 5: "redirect"}.get(reason, str(reason))
+        self._on_end(str(reason).casefold())
 
     @property
     def time_pos(self) -> float:

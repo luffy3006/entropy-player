@@ -119,7 +119,12 @@ class _PlayerInterface(ServiceInterface):
 
     @Volume.setter
     def Volume(self, value: "d") -> None:
-        self._controller.audio.volume = round(max(0.0, min(1.0, value)) * 100)
+        volume = round(max(0.0, min(1.0, value)) * 100)
+        set_volume = getattr(self._controller, "set_volume", None)
+        if set_volume is None:
+            self._controller.audio.volume = volume
+        else:
+            set_volume(volume)
         self._publish()
 
     @dbus_property(access=PropertyAccess.READ)

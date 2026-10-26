@@ -21,7 +21,7 @@ entropy
 
 Create a playlist, select it, then choose **Add folder to playlist** (or right-click that playlist and add a folder). Watched folders appear beneath their owning playlist and their tracks appear in that playlist view. Deleting a playlist stops watching its folders and removes its playlist membership, but leaves media files and library entries intact. Existing watched folders are migrated into an **Imported folders** playlist. The initial scan indexes `.mp3`, `.flac`, `.ogg`, `.wav`, `.mp4`, and `.mkv`; MP4 and MKV files play with their video stream disabled, as audio-only items. Tags are read when available, with the filename used as a title fallback. Excluding a track only hides it from normal library and shuffle views; it does not remove the file and the exclusion remains set if the file is scanned again.
 
-The SQLite database is stored at `~/.config/entropy/entropy.db`. Play history records completed tracks. Skips are recorded only when the next-track action occurs before 30 seconds have elapsed.
+The SQLite database is stored at `~/.config/entropy/entropy.db`; the selected volume is saved in `~/.config/entropy/settings.json` and shared between the GUI and TUI. Play history records completed tracks. Skips are recorded only when the next-track action occurs before 30 seconds have elapsed.
 
 ## Shuffle
 
@@ -68,7 +68,7 @@ Before publishing to an official distro repository, choose and add the project's
 
 ## Controls
 
-In the TUI, use `Up`/`Down` or `j`/`k` to move, `Enter` to play the selected row, `Space` to play or pause, `n`/`p` for next and previous, `m` to mute, `/` to search, and `s` to switch shuffle mode. Press `Enter` in search to return keyboard focus to the track list.
+In the TUI, use `Up`/`Down` or `j`/`k` to move through the scrollable track list, `Enter` to play the selected row, `Space` to play or pause, `Left`/`Right` (or `h`/`l`) to seek, `-`/`+` to change volume, `n`/`p` for next and previous, `m` to mute, `/` to search, and `s` to switch shuffle mode. The playing track is highlighted in both interfaces. Press `Enter` in search to return keyboard focus to the track list.
 
 In the GUI, click or drag anywhere on the seek bar to set playback position and click or drag the volume bar to change volume, as in VLC. `Space` toggles play/pause, `Left`/`Right` seek backward/forward by five seconds, and `Up`/`Down` navigate the track table. Use `Ctrl`+`Up`/`Down` to raise or lower volume by five percent; those volume shortcuts also work when the track table is focused. These shortcuts do not intercept arrow keys or Space while editing search text. The GUI also supports track search, double-click playback, right-click track actions, and playlist deletion. On Linux, earphone and desktop media buttons use the MPRIS service. mpv queues the next selection for a gapless handoff when a track finishes.
 

@@ -169,6 +169,16 @@ class TrackTable(QTableWidget):
                 self.setItem(row, column, item)
         self.setSortingEnabled(True)
 
+    def set_current_track(self, track_id: int | None) -> None:
+        for row in range(self.rowCount()):
+            item = self.item(row, 0)
+            is_current = item is not None and item.data(Qt.ItemDataRole.UserRole) == track_id
+            for column in range(self.columnCount()):
+                cell = self.item(row, column)
+                if cell is not None:
+                    cell.setBackground(QColor("#254a36") if is_current else QColor())
+                    cell.setForeground(QColor("#d7f3a1") if is_current else QColor())
+
 
 class WaveformWidget(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
