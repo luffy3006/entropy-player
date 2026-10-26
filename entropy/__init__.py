@@ -1,5 +1,8 @@
 """Entropy Player: a local music player with history-aware shuffle."""
 
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 
-__version__ = version("entropy-player")
+try:
+    __version__ = version("entropy-player")
+except PackageNotFoundError:
+    __version__ = "0+local"

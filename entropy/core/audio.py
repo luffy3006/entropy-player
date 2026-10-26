@@ -9,6 +9,7 @@ EndFileReason = Literal["eof", "stop", "quit", "error", "redirect", "unknown"]
 
 _NUMERIC_END_REASONS: dict[int, EndFileReason] = {
     0: "eof",
+    1: "stop",
     2: "stop",
     3: "quit",
     4: "error",
@@ -16,6 +17,8 @@ _NUMERIC_END_REASONS: dict[int, EndFileReason] = {
 }
 _STRING_END_REASONS: dict[str, EndFileReason] = {
     "eof": "eof",
+    "restarted": "stop",
+    "aborted": "stop",
     "stop": "stop",
     "quit": "quit",
     "error": "error",
@@ -56,6 +59,7 @@ class AudioBackend(Protocol):
     def paused(self) -> bool: ...
 
     def set_end_callback(self, callback: Callable[[str], None]) -> None: ...
+    def set_file_loaded_callback(self, callback: Callable[[], None]) -> None: ...
     def play(self, filepath: str) -> None: ...
     def queue_next(self, filepath: str) -> None: ...
     def clear_queue(self) -> None: ...
@@ -85,9 +89,17 @@ class AudioEngine(AudioBackend):
         self._player: Any = mpv.MPV(**options)
         self._on_end = on_end
         self._player.event_callback("end-file")(self._handle_end_file)
+        self._on_file_loaded: Callable[[], None] = lambda: None
+        self._player.event_callback("file-loaded")(self._handle_file_loaded)
 
     def set_end_callback(self, callback: Callable[[str], None]) -> None:
         self._on_end = callback
+
+    def set_file_loaded_callback(self, callback: Callable[[], None]) -> None:
+        self._on_file_loaded = callback
+
+    def _handle_file_loaded(self, _event: Any) -> None:
+        self._on_file_loaded()
 
     def _handle_end_file(self, event: Any) -> None:
         event_data = getattr(event, "data", None)

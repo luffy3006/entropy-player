@@ -20,11 +20,12 @@ class AudioEngineTests(unittest.TestCase):
             3: "quit",
             4: "error",
             5: "redirect",
-            1: "unknown",
+            6: "unknown",
+            "MPV_END_FILE_REASON_RESTARTED": "stop",
             "EOF": "eof",
             "MPV_END_FILE_REASON_STOP": "stop",
             "4": "error",
-            "aborted": "unknown",
+            "aborted": "stop",
             "unexpected": "unknown",
         }
         for raw_reason, expected in values.items():

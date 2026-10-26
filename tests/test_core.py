@@ -24,9 +24,14 @@ class FakeAudioBackend:
         self.queue_error = False
         self.stop_calls = 0
         self._end_callback: Callable[[str], None] | None = None
+        self._file_loaded_callback: Callable[[], None] | None = None
+        self.auto_file_loaded = False
 
     def set_end_callback(self, callback: Callable[[str], None]) -> None:
         self._end_callback = callback
+
+    def set_file_loaded_callback(self, callback: Callable[[], None]) -> None:
+        self._file_loaded_callback = callback
 
     def emit_end(self, reason: object) -> None:
         if self._end_callback is not None:
@@ -38,6 +43,12 @@ class FakeAudioBackend:
         self.current_filepath = filepath
         self.played.append(filepath)
         self.time_pos = 0.0
+        if self.auto_file_loaded:
+            self.emit_file_loaded()
+
+    def emit_file_loaded(self) -> None:
+        if self._file_loaded_callback is not None:
+            self._file_loaded_callback()
 
     def queue_next(self, filepath: str) -> None:
         if self.queue_error:
@@ -207,16 +218,47 @@ class CoreTests(unittest.TestCase):
         controller = PlayerController(database=db, audio=FakeAudioBackend(), watcher=FakeWatcher())
         notifications = []
         controller.subscribe(lambda: notifications.append(controller.audio.volume))
-        with patch("entropy.core.controller.save_volume") as save_volume, patch.object(
-            PlayerController, "VOLUME_SAVE_DELAY", 0.04
+
+        class FakeTimer:
+            def __init__(self, _delay, function):
+                self.function = function
+                self.cancelled = False
+                self.started = False
+
+            def start(self):
+                self.started = True
+
+            def cancel(self):
+                self.cancelled = True
+
+            def fire(self):
+                self.function()
+
+        timers = []
+
+        def make_timer(delay, function):
+            timer = FakeTimer(delay, function)
+            timers.append(timer)
+            return timer
+
+        with patch("entropy.core.controller.save_volume") as save_volume, patch(
+            "entropy.core.controller.threading.Timer", side_effect=make_timer
         ):
             try:
                 controller.set_volume(20)
+                first_timer = timers[-1]
                 controller.set_volume(40)
+                second_timer = timers[-1]
                 controller.set_volume(65)
+                last_timer = timers[-1]
                 self.assertEqual(notifications, [20, 40, 65])
+                self.assertTrue(first_timer.cancelled)
+                self.assertTrue(second_timer.cancelled)
                 save_volume.assert_not_called()
-                time.sleep(0.12)
+                first_timer.fire()
+                second_timer.fire()
+                save_volume.assert_not_called()
+                last_timer.fire()
                 save_volume.assert_called_once_with(65)
             finally:
                 controller.close()
@@ -224,14 +266,75 @@ class CoreTests(unittest.TestCase):
     def test_volume_write_is_flushed_on_shutdown(self):
         db = LibraryDatabase(self.root / "flush-volume.db")
         controller = PlayerController(database=db, audio=FakeAudioBackend(), watcher=FakeWatcher())
-        with patch("entropy.core.controller.save_volume") as save_volume, patch.object(
-            PlayerController, "VOLUME_SAVE_DELAY", 10
+
+        class FakeTimer:
+            def __init__(self, _delay, function):
+                self.function = function
+                self.cancelled = False
+
+            def start(self):
+                pass
+
+            def cancel(self):
+                self.cancelled = True
+
+        timers = []
+
+        def make_timer(delay, function):
+            timer = FakeTimer(delay, function)
+            timers.append(timer)
+            return timer
+
+        with patch("entropy.core.controller.save_volume") as save_volume, patch(
+            "entropy.core.controller.threading.Timer", side_effect=make_timer
         ):
             controller.set_volume(81)
             controller.close()
             save_volume.assert_called_once_with(81)
-            time.sleep(0.05)
+            self.assertTrue(timers[0].cancelled)
             save_volume.assert_called_once_with(81)
+
+    def test_successfully_loaded_track_resets_error_streak(self):
+        audio = FakeAudioBackend()
+        controller = PlayerController(database=self.database, audio=audio, watcher=FakeWatcher())
+        controller._consecutive_errors = 2
+
+        audio.emit_file_loaded()
+
+        self.assertEqual(controller._consecutive_errors, 0)
+
+    def test_manual_selection_resets_error_streak(self):
+        audio = FakeAudioBackend()
+        controller = PlayerController(database=self.database, audio=audio, watcher=FakeWatcher())
+        controller._consecutive_errors = 2
+
+        controller.play_track(self.track_id)
+
+        self.assertEqual(controller._consecutive_errors, 0)
+
+    def test_controller_close_is_idempotent_and_closes_audio_and_watcher_once(self):
+        class CountingAudio(FakeAudioBackend):
+            close_count = 0
+
+            def close(self):
+                self.close_count += 1
+
+        class CountingWatcher(FakeWatcher):
+            close_count = 0
+
+            def close(self):
+                self.close_count += 1
+
+        audio = CountingAudio()
+        watcher = CountingWatcher()
+        db = LibraryDatabase(self.root / "idempotent-close.db")
+        controller = PlayerController(database=db, audio=audio, watcher=watcher)
+
+        controller.close()
+        controller.close()
+
+        self.assertEqual(audio.close_count, 1)
+        self.assertEqual(watcher.close_count, 1)
 
     def test_legacy_watched_folders_are_migrated_into_imported_playlist(self):
         legacy_db = self.root / "legacy.db"
@@ -394,7 +497,7 @@ class CoreTests(unittest.TestCase):
         previous_id = controller.current_id
 
         with self.assertLogs("entropy.core.controller", level="DEBUG"):
-            audio.emit_end(1)
+            audio.emit_end(6)
 
         self.assertEqual(controller.current_id, previous_id)
         self.assertEqual(self.database.get_tracks()[0]["play_count"], 0)

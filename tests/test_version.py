@@ -1,7 +1,13 @@
+import importlib
+from importlib.metadata import PackageNotFoundError
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+import entropy
 from scripts.check_version import check_versions
 
 
@@ -56,6 +62,27 @@ class VersionCheckTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     check_versions(self.root)
                 changed_path.write_text(originals[changed_path], encoding="utf-8")
+
+    def test_source_checkout_has_local_version_fallback(self):
+        try:
+            with patch(
+                "importlib.metadata.version",
+                side_effect=PackageNotFoundError("entropy-player"),
+            ):
+                importlib.reload(entropy)
+                self.assertEqual(entropy.__version__, "0+local")
+        finally:
+            importlib.reload(entropy)
+
+    def test_module_cli_can_show_version_from_checkout(self):
+        result = subprocess.run(
+            [sys.executable, "-m", "entropy", "--version"],
+            cwd=Path(__file__).resolve().parents[1],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn(f"Entropy Player {entropy.__version__}", result.stdout)
 
 
 if __name__ == "__main__":

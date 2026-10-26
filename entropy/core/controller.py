@@ -35,11 +35,14 @@ class PlayerController:
         self._listeners: list[Any] = []
         self.audio: AudioBackend = audio or AudioEngine(self._on_end_file)
         self.audio.set_end_callback(self._on_end_file)
+        self.audio.set_file_loaded_callback(self._on_file_loaded)
         self.audio.volume = load_volume(self.audio.volume)
         self._consecutive_errors = 0
         self._volume_lock = threading.Lock()
         self._volume_timer: threading.Timer | None = None
         self._pending_volume: int | None = None
+        self._closed = False
+        self._close_lock = threading.Lock()
         self.watcher = watcher or LibraryWatcher(self.database, self._library_changed)
         self.watcher.start()
 
@@ -229,6 +232,10 @@ class PlayerController:
         if next_track_queued:
             self._queue_current_successor()
 
+    def _on_file_loaded(self) -> None:
+        with self._lock:
+            self._consecutive_errors = 0
+
     def _queue_current_successor(self) -> None:
         with self._lock:
             if self.current_id is None:
@@ -348,6 +355,10 @@ class PlayerController:
         }
 
     def close(self) -> None:
+        with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
         self._flush_pending_volume()
         self.watcher.close()
         self.audio.close()

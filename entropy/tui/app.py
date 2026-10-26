@@ -54,6 +54,8 @@ class EntropyTUI(App[None]):
         self.controller = controller
         self._query = ""
         self._last_track_ids: list[int] = []
+        self._refresh_timer = None
+        self._refresh_active = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -67,11 +69,12 @@ class EntropyTUI(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        self._refresh_active = True
         table = self.query_one(DataTable)
         table.add_columns("Title", "Artist", "Album", "Time", "Plays", "Skips", "Weight")
         self.refresh_view()
         table.focus()
-        self.set_interval(0.8, self.refresh_view)
+        self._refresh_timer = self.set_interval(0.8, self.refresh_view)
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "search":
@@ -89,6 +92,8 @@ class EntropyTUI(App[None]):
             return
 
     def refresh_view(self) -> None:
+        if not self._refresh_active:
+            return
         tracks = self.controller.tracks()
         if self._query:
             tracks = [track for track in tracks if self._query in " ".join((track["title"], track["artist"], track["album"])).casefold()]
@@ -192,6 +197,9 @@ class EntropyTUI(App[None]):
         self.notify(f"{mode.title()} shuffle")
 
     def on_unmount(self) -> None:
+        self._refresh_active = False
+        if self._refresh_timer is not None:
+            self._refresh_timer.stop()
         self.controller.close()
 
 
