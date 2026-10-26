@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import os
+import signal
 import sys
+from types import FrameType
 
 from entropy import __version__
 
@@ -32,6 +35,15 @@ def main() -> int:
         database.close()
         print(f"Entropy Player could not start: {exc}", file=sys.stderr)
         return 1
+
+    atexit.register(controller.close)
+
+    def shutdown(signum: int, _frame: FrameType | None) -> None:
+        controller.close()
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGINT, shutdown)
+    signal.signal(signal.SIGTERM, shutdown)
 
     try:
         if mode == "gui":

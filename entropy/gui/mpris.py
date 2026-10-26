@@ -8,7 +8,6 @@ from typing import Any
 
 from dbus_next import Variant
 from dbus_next.aio import MessageBus
-from dbus_next.constants import NameFlag
 from dbus_next.service import PropertyAccess, ServiceInterface, dbus_property, method, signal
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -120,11 +119,7 @@ class _PlayerInterface(ServiceInterface):
     @Volume.setter
     def Volume(self, value: "d") -> None:
         volume = round(max(0.0, min(1.0, value)) * 100)
-        set_volume = getattr(self._controller, "set_volume", None)
-        if set_volume is None:
-            self._controller.audio.volume = volume
-        else:
-            set_volume(volume)
+        self._controller.set_volume(volume)
         self._publish()
 
     @dbus_property(access=PropertyAccess.READ)
@@ -277,7 +272,6 @@ class MprisBridge:
 
         def publish() -> None:
             state = self.controller.state()
-            current = state["current"]
             metadata = self._player_interface.Metadata
             changed = {
                 "PlaybackStatus": self._player_interface.PlaybackStatus,

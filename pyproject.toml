@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "entropy-player"
-version = "0.1.1"
+version = "0.1.2"
 description = "A local music player with history-aware entropy shuffle"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -17,6 +17,9 @@ dependencies = [
     "dbus-next>=0.2.3",
 ]
 
+[project.optional-dependencies]
+test = ["ruff>=0.6"]
+
 [project.scripts]
 entropy = "entropy.main:main"
 
@@ -26,3 +29,9 @@ include = ["entropy*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+"entropy/gui/mpris.py" = ["F722", "F821"]

@@ -1,12 +1,84 @@
 import tempfile
 import time
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
+from entropy.core.audio import normalize_end_reason
 from entropy.core.database import LibraryDatabase
 from entropy.core.controller import PlayerController
 from entropy.core.scheduler import EntropyScheduler, track_weight, weight_percentages
+
+
+class FakeAudioBackend:
+    def __init__(self) -> None:
+        self.time_pos: float = 0.0
+        self.duration: float = 60.0
+        self.volume: int = 50
+        self.muted = False
+        self.paused = False
+        self.played: list[str] = []
+        self.queued: list[str] = []
+        self.current_filepath: str | None = None
+        self.queue_error = False
+        self.stop_calls = 0
+        self._end_callback: Callable[[str], None] | None = None
+        self._file_loaded_callback: Callable[[], None] | None = None
+        self.auto_file_loaded = False
+
+    def set_end_callback(self, callback: Callable[[str], None]) -> None:
+        self._end_callback = callback
+
+    def set_file_loaded_callback(self, callback: Callable[[], None]) -> None:
+        self._file_loaded_callback = callback
+
+    def emit_end(self, reason: object) -> None:
+        if self._end_callback is not None:
+            self._end_callback(normalize_end_reason(reason))
+
+    def play(self, filepath: str) -> None:
+        if self.current_filepath is not None:
+            self.emit_end("stop")
+        self.current_filepath = filepath
+        self.played.append(filepath)
+        self.time_pos = 0.0
+        if self.auto_file_loaded:
+            self.emit_file_loaded()
+
+    def emit_file_loaded(self) -> None:
+        if self._file_loaded_callback is not None:
+            self._file_loaded_callback()
+
+    def queue_next(self, filepath: str) -> None:
+        if self.queue_error:
+            raise RuntimeError("simulated queue failure")
+        self.queued.append(filepath)
+
+    def clear_queue(self) -> None:
+        self.queued.clear()
+
+    def pause(self) -> None:
+        self.paused = not self.paused
+
+    def seek(self, seconds: float) -> None:
+        self.time_pos = max(0.0, seconds)
+
+    def stop(self) -> None:
+        self.stop_calls += 1
+        self.emit_end("stop")
+        self.current_filepath = None
+
+    def close(self) -> None:
+        pass
+
+
+class FakeWatcher:
+    def start(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
 
 
 class CoreTests(unittest.TestCase):
@@ -115,14 +187,9 @@ class CoreTests(unittest.TestCase):
         playlist_id = self.database.create_playlist("Selected")
         self.database.add_to_playlist(playlist_id, self.track_id)
 
-        class FakeAudio:
-            time_pos = 0
-
-        class FakeWatcher:
-            def start(self):
-                pass
-
-        controller = PlayerController(database=self.database, audio=FakeAudio(), watcher=FakeWatcher())
+        controller = PlayerController(
+            database=self.database, audio=FakeAudioBackend(), watcher=FakeWatcher()
+        )
         controller.set_shuffle_playlist(playlist_id)
         candidate_ids = [track["id"] for track in controller._shuffle_candidates()]
         self.assertEqual(candidate_ids, [self.track_id])
@@ -134,24 +201,140 @@ class CoreTests(unittest.TestCase):
     def test_controller_restores_saved_volume(self):
         second_db = LibraryDatabase(self.root / "volume.db")
 
-        class FakeAudio:
-            volume = 50
-            time_pos = 0
-
-            def close(self):
-                pass
-
-        class FakeWatcher:
-            def start(self):
-                pass
-
         with patch.dict("os.environ", {"XDG_CONFIG_HOME": str(self.root / "config")}):
             from entropy.core.preferences import save_volume
 
             save_volume(73)
-            controller = PlayerController(database=second_db, audio=FakeAudio(), watcher=FakeWatcher())
-            self.assertEqual(controller.audio.volume, 73)
-            second_db.close()
+            controller = PlayerController(
+                database=second_db, audio=FakeAudioBackend(), watcher=FakeWatcher()
+            )
+            try:
+                self.assertEqual(controller.audio.volume, 73)
+            finally:
+                controller.close()
+
+    def test_volume_writes_are_debounced_and_coalesced(self):
+        db = LibraryDatabase(self.root / "debounced-volume.db")
+        controller = PlayerController(database=db, audio=FakeAudioBackend(), watcher=FakeWatcher())
+        notifications = []
+        controller.subscribe(lambda: notifications.append(controller.audio.volume))
+
+        class FakeTimer:
+            def __init__(self, _delay, function):
+                self.function = function
+                self.cancelled = False
+                self.started = False
+
+            def start(self):
+                self.started = True
+
+            def cancel(self):
+                self.cancelled = True
+
+            def fire(self):
+                self.function()
+
+        timers = []
+
+        def make_timer(delay, function):
+            timer = FakeTimer(delay, function)
+            timers.append(timer)
+            return timer
+
+        with patch("entropy.core.controller.save_volume") as save_volume, patch(
+            "entropy.core.controller.threading.Timer", side_effect=make_timer
+        ):
+            try:
+                controller.set_volume(20)
+                first_timer = timers[-1]
+                controller.set_volume(40)
+                second_timer = timers[-1]
+                controller.set_volume(65)
+                last_timer = timers[-1]
+                self.assertEqual(notifications, [20, 40, 65])
+                self.assertTrue(first_timer.cancelled)
+                self.assertTrue(second_timer.cancelled)
+                save_volume.assert_not_called()
+                first_timer.fire()
+                second_timer.fire()
+                save_volume.assert_not_called()
+                last_timer.fire()
+                save_volume.assert_called_once_with(65)
+            finally:
+                controller.close()
+
+    def test_volume_write_is_flushed_on_shutdown(self):
+        db = LibraryDatabase(self.root / "flush-volume.db")
+        controller = PlayerController(database=db, audio=FakeAudioBackend(), watcher=FakeWatcher())
+
+        class FakeTimer:
+            def __init__(self, _delay, function):
+                self.function = function
+                self.cancelled = False
+
+            def start(self):
+                pass
+
+            def cancel(self):
+                self.cancelled = True
+
+        timers = []
+
+        def make_timer(delay, function):
+            timer = FakeTimer(delay, function)
+            timers.append(timer)
+            return timer
+
+        with patch("entropy.core.controller.save_volume") as save_volume, patch(
+            "entropy.core.controller.threading.Timer", side_effect=make_timer
+        ):
+            controller.set_volume(81)
+            controller.close()
+            save_volume.assert_called_once_with(81)
+            self.assertTrue(timers[0].cancelled)
+            save_volume.assert_called_once_with(81)
+
+    def test_successfully_loaded_track_resets_error_streak(self):
+        audio = FakeAudioBackend()
+        controller = PlayerController(database=self.database, audio=audio, watcher=FakeWatcher())
+        controller._consecutive_errors = 2
+
+        audio.emit_file_loaded()
+
+        self.assertEqual(controller._consecutive_errors, 0)
+
+    def test_manual_selection_resets_error_streak(self):
+        audio = FakeAudioBackend()
+        controller = PlayerController(database=self.database, audio=audio, watcher=FakeWatcher())
+        controller._consecutive_errors = 2
+
+        controller.play_track(self.track_id)
+
+        self.assertEqual(controller._consecutive_errors, 0)
+
+    def test_controller_close_is_idempotent_and_closes_audio_and_watcher_once(self):
+        class CountingAudio(FakeAudioBackend):
+            close_count = 0
+
+            def close(self):
+                self.close_count += 1
+
+        class CountingWatcher(FakeWatcher):
+            close_count = 0
+
+            def close(self):
+                self.close_count += 1
+
+        audio = CountingAudio()
+        watcher = CountingWatcher()
+        db = LibraryDatabase(self.root / "idempotent-close.db")
+        controller = PlayerController(database=db, audio=audio, watcher=watcher)
+
+        controller.close()
+        controller.close()
+
+        self.assertEqual(audio.close_count, 1)
+        self.assertEqual(watcher.close_count, 1)
 
     def test_legacy_watched_folders_are_migrated_into_imported_playlist(self):
         legacy_db = self.root / "legacy.db"
@@ -176,33 +359,148 @@ class CoreTests(unittest.TestCase):
         second.write_bytes(b"ID3")
         second_id = self.database.add_track(second)
 
-        class FakeAudio:
-            time_pos = 60.0
-
-            def __init__(self):
-                self.played = []
-                self.queued = []
-
-            def play(self, filepath):
-                self.played.append(filepath)
-
-            def queue_next(self, filepath):
-                self.queued.append(filepath)
-
-        class FakeWatcher:
-            def start(self):
-                pass
-
-        audio = FakeAudio()
+        audio = FakeAudioBackend()
         controller = PlayerController(database=self.database, audio=audio, watcher=FakeWatcher())
         controller.play_track(self.track_id)
         self.assertEqual(audio.queued, [str(second.resolve())])
-        controller._on_end_file("eof")
+        audio.emit_end(0)
         self.assertEqual(controller.current_id, second_id)
         self.assertEqual(audio.played, [str(self.track_path.resolve())])
         counts = {row["id"]: row["play_count"] for row in self.database.get_tracks()}
         self.assertEqual(counts[self.track_id], 1)
         self.assertEqual(audio.queued[-1], str(self.track_path.resolve()))
+
+    def test_eof_without_prequeued_successor_advances(self):
+        second = self.root / "second.mp3"
+        second.write_bytes(b"ID3")
+        second_id = self.database.add_track(second)
+        audio = FakeAudioBackend()
+        controller = PlayerController(database=self.database, audio=audio, watcher=FakeWatcher())
+        audio.queue_error = True
+
+        controller.play_track(self.track_id)
+        self.assertIsNone(controller._queued_id)
+        audio.queue_error = False
+        audio.emit_end("EOF")
+
+        self.assertEqual(controller.current_id, second_id)
+        counts = {row["id"]: row["play_count"] for row in self.database.get_tracks()}
+        self.assertEqual(counts[self.track_id], 1)
+
+    def test_eof_advances_when_prequeue_attempt_fails(self):
+        second = self.root / "second.mp3"
+        second.write_bytes(b"ID3")
+        second_id = self.database.add_track(second)
+        audio = FakeAudioBackend()
+        controller = PlayerController(database=self.database, audio=audio, watcher=FakeWatcher())
+        audio.queue_error = True
+
+        controller.play_track(self.track_id)
+        audio.emit_end("eof")
+
+        self.assertEqual(controller.current_id, second_id)
+        self.assertEqual(controller._consecutive_errors, 0)
+
+    def test_eof_advances_after_successor_queue_fails(self):
+        paths = [self.root / f"track-{index}.mp3" for index in range(2)]
+        track_ids = []
+        for path in paths:
+            path.write_bytes(b"ID3")
+            track_ids.append(self.database.add_track(path))
+        audio = FakeAudioBackend()
+        controller = PlayerController(database=self.database, audio=audio, watcher=FakeWatcher())
+        controller.play_track(self.track_id)
+        first_successor = controller._queued_id
+        self.assertIsNotNone(first_successor)
+
+        audio.queue_error = True
+        audio.emit_end("eof")
+        self.assertEqual(controller.current_id, first_successor)
+        self.assertIsNone(controller._queued_id)
+
+        audio.queue_error = False
+        audio.emit_end("eof")
+
+        self.assertNotEqual(controller.current_id, first_successor)
+        counts = {row["id"]: row["play_count"] for row in self.database.get_tracks()}
+        self.assertEqual(counts[self.track_id], 1)
+        self.assertEqual(counts[first_successor], 1)
+
+    def test_eof_with_no_successor_candidate_advances_without_queue(self):
+        empty_playlist = self.database.create_playlist("No queue candidates")
+        audio = FakeAudioBackend()
+        controller = PlayerController(database=self.database, audio=audio, watcher=FakeWatcher())
+        controller.set_shuffle_playlist(empty_playlist)
+        controller.play_track(self.track_id)
+        self.assertIsNone(controller._queued_id)
+
+        audio.emit_end("eof")
+
+        self.assertIsNone(controller.current_id)
+        self.assertEqual(self.database.get_tracks()[0]["play_count"], 1)
+
+    def test_manual_next_and_previous_stop_reasons_do_not_record_completed_plays(self):
+        second = self.root / "second.mp3"
+        second.write_bytes(b"ID3")
+        self.database.add_track(second)
+        audio = FakeAudioBackend()
+        controller = PlayerController(database=self.database, audio=audio, watcher=FakeWatcher())
+
+        controller.play_track(self.track_id)
+        controller.next_track()
+        audio.emit_end(2)
+        controller.previous_track()
+        audio.emit_end("stop")
+        controller.stop()
+        audio.emit_end(3)
+
+        self.assertTrue(all(row["play_count"] == 0 for row in self.database.get_tracks()))
+        self.assertIsNone(controller.current_id)
+
+    def test_single_audio_error_skips_failed_track_once(self):
+        second = self.root / "second.mp3"
+        second.write_bytes(b"ID3")
+        second_id = self.database.add_track(second)
+        audio = FakeAudioBackend()
+        controller = PlayerController(database=self.database, audio=audio, watcher=FakeWatcher())
+        controller.play_track(self.track_id)
+
+        audio.emit_end("MPV_END_FILE_REASON_ERROR")
+
+        self.assertEqual(controller.current_id, second_id)
+        self.assertEqual(controller._consecutive_errors, 1)
+        self.assertEqual(audio.stop_calls, 0)
+        self.assertTrue(all(row["play_count"] == 0 for row in self.database.get_tracks()))
+
+    def test_consecutive_audio_errors_stop_after_limit_and_notify(self):
+        for index in range(2):
+            path = self.root / f"second-{index}.mp3"
+            path.write_bytes(b"ID3")
+            self.database.add_track(path)
+        audio = FakeAudioBackend()
+        controller = PlayerController(database=self.database, audio=audio, watcher=FakeWatcher())
+        notifications = []
+        controller.subscribe(lambda: notifications.append(controller.current_id))
+        controller.play_track(self.track_id)
+
+        for _ in range(controller.MAX_CONSECUTIVE_AUDIO_ERRORS):
+            audio.emit_end("error")
+
+        self.assertIsNone(controller.current_id)
+        self.assertEqual(audio.stop_calls, 1)
+        self.assertGreaterEqual(len(notifications), controller.MAX_CONSECUTIVE_AUDIO_ERRORS)
+
+    def test_unknown_end_reason_does_not_change_playback(self):
+        audio = FakeAudioBackend()
+        controller = PlayerController(database=self.database, audio=audio, watcher=FakeWatcher())
+        controller.play_track(self.track_id)
+        previous_id = controller.current_id
+
+        with self.assertLogs("entropy.core.controller", level="DEBUG"):
+            audio.emit_end(6)
+
+        self.assertEqual(controller.current_id, previous_id)
+        self.assertEqual(self.database.get_tracks()[0]["play_count"], 0)
 
     def test_video_containers_are_indexed_as_audio_items(self):
         for suffix in (".mp4", ".mkv"):
@@ -233,17 +531,9 @@ class CoreTests(unittest.TestCase):
         second.write_bytes(b"ID3")
         second_id = self.database.add_track(second)
 
-        class FakeAudio:
-            time_pos = 8.0
-
-            def play(self, _filepath):
-                pass
-
-        class FakeWatcher:
-            def start(self):
-                pass
-
-        controller = PlayerController(database=self.database, audio=FakeAudio(), watcher=FakeWatcher())
+        audio = FakeAudioBackend()
+        audio.time_pos = 8.0
+        controller = PlayerController(database=self.database, audio=audio, watcher=FakeWatcher())
         controller.play_track(self.track_id)
         controller.play_track(second_id)
         first = next(row for row in self.database.get_tracks(include_excluded=True) if row["id"] == self.track_id)

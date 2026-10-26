@@ -100,6 +100,8 @@ class TuiShortcutTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(table.cursor_row, previous_cursor)
             self.assertEqual(table.scroll_y, previous_scroll)
 
+        app.refresh_view()
+
 
 if __name__ == "__main__":
     unittest.main()

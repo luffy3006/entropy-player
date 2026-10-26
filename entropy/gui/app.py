@@ -179,11 +179,7 @@ class EntropyWindow(QMainWindow):
         self._update_playback()
 
     def _set_volume(self, value: int) -> None:
-        set_volume = getattr(self.controller, "set_volume", None)
-        if set_volume is None:
-            self.controller.audio.volume = value
-        else:
-            set_volume(value)
+        self.controller.set_volume(value)
 
     def _set_application_icon(self) -> None:
         icon_paths = [
