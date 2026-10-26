@@ -38,6 +38,9 @@ class FakeController:
         self.play_pause_count += 1
         self.audio.paused = not self.audio.paused
 
+    def set_volume(self, value):
+        self.audio.volume = max(0, min(100, value))
+
     def subscribe(self, _callback):
         pass
 

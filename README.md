@@ -74,8 +74,13 @@ In the GUI, click or drag anywhere on the seek bar to set playback position and 
 
 ## Development
 
-Run the core tests with:
+The v0.1.2 maintenance release hardens mpv end-file reason handling, prevents manual transitions from being counted as natural completions, limits consecutive playback-error recovery, and debounces volume preference writes. The Arch recipe now targets a versioned release archive.
+
+Install the test/lint dependencies and run the same checks as CI:
 
 ```sh
-python -m unittest discover -s tests
+python -m pip install -e ".[test]"
+QT_QPA_PLATFORM=offscreen dbus-run-session -- python -m unittest discover -s tests -v
+python scripts/check_version.py
+ruff check entropy tests scripts
 ```

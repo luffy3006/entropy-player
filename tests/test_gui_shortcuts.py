@@ -179,6 +179,18 @@ class GuiShortcutTests(unittest.TestCase):
         self.assertEqual(self.window.playback.track_title.text(), "2")
         self.assertEqual(self.window.playback.track_artist.text(), "Artist")
 
+    def test_non_current_rows_restore_the_table_theme(self):
+        self.controller.current_id = 2
+        self.window._update_playback()
+        self.controller.current_id = None
+        self.window._update_playback()
+
+        for row in range(self.window.table.rowCount()):
+            for column in range(self.window.table.columnCount()):
+                item = self.window.table.item(row, column)
+                self.assertIsNone(item.data(Qt.ItemDataRole.BackgroundRole))
+                self.assertIsNone(item.data(Qt.ItemDataRole.ForegroundRole))
+
     def test_watched_folders_are_entries_in_single_playlists_section(self):
         navigation = LibraryNavigation()
         navigation.set_playlists([{"id": 7, "name": "Favourites", "track_count": 2, "folders": ["/music/library"]}])

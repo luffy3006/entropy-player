@@ -2,20 +2,26 @@
 
 from __future__ import annotations
 
+import logging
 import random
 import threading
 from collections import deque
 from typing import Any
 
-from entropy.core.audio import AudioEngine
+from entropy.core.audio import AudioBackend, AudioEngine, normalize_end_reason
 from entropy.core.database import LibraryDatabase
 from entropy.core.preferences import load_volume, save_volume
 from entropy.core.scheduler import EntropyScheduler, track_weight, weight_percentages
 from entropy.core.watcher import LibraryWatcher
 
+logger = logging.getLogger(__name__)
+
 
 class PlayerController:
-    def __init__(self, database: LibraryDatabase | None = None, audio: AudioEngine | None = None,
+    MAX_CONSECUTIVE_AUDIO_ERRORS = 3
+    VOLUME_SAVE_DELAY = 0.4
+
+    def __init__(self, database: LibraryDatabase | None = None, audio: AudioBackend | None = None,
                  watcher: LibraryWatcher | None = None) -> None:
         self.database = database or LibraryDatabase()
         self.scheduler = EntropyScheduler()
@@ -27,8 +33,13 @@ class PlayerController:
         self._shuffle_playlist_id: int | None = None
         self._lock = threading.RLock()
         self._listeners: list[Any] = []
-        self.audio = audio or AudioEngine(self._on_end_file)
-        self.audio.volume = load_volume(getattr(self.audio, "volume", 50))
+        self.audio: AudioBackend = audio or AudioEngine(self._on_end_file)
+        self.audio.set_end_callback(self._on_end_file)
+        self.audio.volume = load_volume(self.audio.volume)
+        self._consecutive_errors = 0
+        self._volume_lock = threading.Lock()
+        self._volume_timer: threading.Timer | None = None
+        self._pending_volume: int | None = None
         self.watcher = watcher or LibraryWatcher(self.database, self._library_changed)
         self.watcher.start()
 
@@ -71,6 +82,7 @@ class PlayerController:
         if track is None or track["is_excluded"]:
             return
         with self._lock:
+            self._consecutive_errors = 0
             if self.current_id is not None and self.current_id != track_id:
                 self.database.record_skip(self.current_id, self.audio.time_pos)
                 self._remember_recent(self.current_id)
@@ -81,17 +93,16 @@ class PlayerController:
         self.current_id = int(track["id"])
         self._queued_id = None
         self.audio.play(track["filepath"])
-        queue_next = getattr(self.audio, "queue_next", None)
-        if queue_next is not None:
-            candidates = self._shuffle_candidates()
-            if candidates:
-                queued = self._choose_successor(candidates, self.current_id)
-                if queued is not None:
-                    try:
-                        queue_next(queued["filepath"])
-                    except (OSError, RuntimeError):
-                        return
-                    self._queued_id = int(queued["id"])
+        candidates = self._shuffle_candidates()
+        if candidates:
+            queued = self._choose_successor(candidates, self.current_id)
+            if queued is not None:
+                try:
+                    self.audio.queue_next(queued["filepath"])
+                except (OSError, RuntimeError):
+                    logger.debug("Could not queue next track", exc_info=True)
+                    return
+                self._queued_id = int(queued["id"])
 
     def play_pause(self) -> None:
         if self.current_id is None:
@@ -102,18 +113,35 @@ class PlayerController:
 
     def set_volume(self, volume: int) -> None:
         value = max(0, min(100, int(volume)))
-        self.audio.volume = value
-        save_volume(value)
+        with self._volume_lock:
+            self.audio.volume = value
+            self._pending_volume = value
+            if self._volume_timer is not None:
+                self._volume_timer.cancel()
+            timer = threading.Timer(
+                self.VOLUME_SAVE_DELAY,
+                lambda: self._flush_pending_volume(timer),
+            )
+            self._volume_timer = timer
+            self._volume_timer.daemon = True
+            timer.start()
         self._notify()
 
     def stop(self) -> None:
+        with self._lock:
+            self.current_id = None
+            self._queued_id = None
+            self._consecutive_errors = 0
         self.audio.stop()
-        self.current_id = None
-        self._queued_id = None
         self._notify()
 
     def next_track(self) -> None:
+        self._advance(reset_error_streak=True)
+
+    def _advance(self, reset_error_streak: bool) -> None:
         with self._lock:
+            if reset_error_streak:
+                self._consecutive_errors = 0
             current_id = self.current_id
             if current_id is not None:
                 self.database.record_skip(current_id, self.audio.time_pos)
@@ -136,6 +164,8 @@ class PlayerController:
                 self._notify()
 
     def previous_track(self) -> None:
+        with self._lock:
+            self._consecutive_errors = 0
         tracks = self.database.get_tracks()
         if not tracks:
             return
@@ -148,39 +178,70 @@ class PlayerController:
             self.next_track()
 
     def _on_end_file(self, reason: str) -> None:
+        reason = normalize_end_reason(reason)
+        if reason == "unknown":
+            logger.debug("Ignoring unknown mpv end-file reason")
+            return
+        if reason in {"stop", "quit", "redirect"}:
+            return
+
+        if reason == "error":
+            with self._lock:
+                failed_id = self.current_id
+                if failed_id is None:
+                    logger.debug("Ignoring mpv playback error without an active track")
+                    return
+                self._consecutive_errors += 1
+                self._remember_recent(failed_id)
+                self.current_id = None
+                self._queued_id = None
+                if self._consecutive_errors >= self.MAX_CONSECUTIVE_AUDIO_ERRORS:
+                    self.audio.stop()
+                    should_advance = False
+                else:
+                    try:
+                        self.audio.clear_queue()
+                    except (OSError, RuntimeError):
+                        logger.debug("Could not clear mpv queue after playback error", exc_info=True)
+                    self._advance(reset_error_streak=False)
+                    should_advance = True
+            if not should_advance:
+                self._notify()
+            return
+
         with self._lock:
             finished_id = self.current_id
-            if finished_id is not None and reason == "eof":
-                self.database.record_play(finished_id)
-                self._remember_recent(finished_id)
-            if reason == "eof" and self._queued_id is not None:
+            if finished_id is None:
+                logger.debug("Ignoring mpv EOF without an active track")
+                return
+            self._consecutive_errors = 0
+            self.database.record_play(finished_id)
+            self._remember_recent(finished_id)
+            if self._queued_id is not None:
                 self.current_id, self._queued_id = self._queued_id, None
                 next_track_queued = True
             else:
                 next_track_queued = False
-                if reason == "eof":
-                    self.current_id = None
+                self.current_id = None
+                self._advance(reset_error_streak=False)
+                return
         self._notify()
-        if reason == "eof":
-            if next_track_queued:
-                self._queue_current_successor()
-            else:
-                self.next_track()
+        if next_track_queued:
+            self._queue_current_successor()
 
     def _queue_current_successor(self) -> None:
-        if self.current_id is None:
-            return
-        queue_next = getattr(self.audio, "queue_next", None)
-        if queue_next is None:
-            return
-        candidates = self._shuffle_candidates()
-        queued = self._choose_successor(candidates, self.current_id)
-        if queued is not None:
-            try:
-                queue_next(queued["filepath"])
-            except (OSError, RuntimeError):
+        with self._lock:
+            if self.current_id is None:
                 return
-            self._queued_id = int(queued["id"])
+            candidates = self._shuffle_candidates()
+            queued = self._choose_successor(candidates, self.current_id)
+            if queued is not None:
+                try:
+                    self.audio.queue_next(queued["filepath"])
+                except (OSError, RuntimeError):
+                    logger.debug("Could not queue successor track", exc_info=True)
+                    return
+                self._queued_id = int(queued["id"])
 
     def _choose_successor(self, tracks: list[dict[str, Any]], current_id: int | None) -> dict[str, Any] | None:
         recent_ids = tuple(self._recent_ids)
@@ -199,26 +260,25 @@ class PlayerController:
         return self.database.get_tracks()
 
     def set_shuffle_playlist(self, playlist_id: int | None) -> None:
-        self._shuffle_playlist_id = playlist_id
-        clear_queue = getattr(self.audio, "clear_queue", None)
-        if clear_queue is not None and self.current_id is not None:
-            try:
-                clear_queue()
-            except Exception:
-                pass
-            self._queued_id = None
-            self._queue_current_successor()
+        with self._lock:
+            self._shuffle_playlist_id = playlist_id
+            if self.current_id is not None:
+                try:
+                    self.audio.clear_queue()
+                except (OSError, RuntimeError):
+                    logger.debug("Could not clear mpv queue after playlist change", exc_info=True)
+                self._queued_id = None
+                self._queue_current_successor()
         self._notify()
 
     def reset_shuffle_history(self) -> None:
-        self.database.reset_shuffle_history()
-        self._recent_ids.clear()
-        clear_queue = getattr(self.audio, "clear_queue", None)
-        if clear_queue is not None:
+        with self._lock:
+            self.database.reset_shuffle_history()
+            self._recent_ids.clear()
             try:
-                clear_queue()
-            except Exception:
-                pass
+                self.audio.clear_queue()
+            except (OSError, RuntimeError):
+                logger.debug("Could not clear mpv queue after shuffle reset", exc_info=True)
             self._queued_id = None
             self._queue_current_successor()
         self._notify()
@@ -288,6 +348,20 @@ class PlayerController:
         }
 
     def close(self) -> None:
+        self._flush_pending_volume()
         self.watcher.close()
         self.audio.close()
         self.database.close()
+
+    def _flush_pending_volume(self, expected_timer: threading.Timer | None = None) -> None:
+        with self._volume_lock:
+            if expected_timer is not None and self._volume_timer is not expected_timer:
+                return
+            volume = self._pending_volume
+            self._pending_volume = None
+            timer = self._volume_timer
+            self._volume_timer = None
+            if timer is not None and timer is not threading.current_thread():
+                timer.cancel()
+            if volume is not None:
+                save_volume(volume)

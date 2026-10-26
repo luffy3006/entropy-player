@@ -165,11 +165,7 @@ class EntropyTUI(App[None]):
         self._set_volume(self.controller.audio.volume + 5)
 
     def _set_volume(self, value: int) -> None:
-        set_volume = getattr(self.controller, "set_volume", None)
-        if set_volume is None:
-            self.controller.audio.volume = max(0, min(100, value))
-        else:
-            set_volume(value)
+        self.controller.set_volume(value)
 
     def action_play_pause(self) -> None:
         self.controller.play_pause()

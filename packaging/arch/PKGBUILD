@@ -1,5 +1,5 @@
 pkgname=entropy-player
-pkgver=0.1.1
+pkgver=0.1.2
 pkgrel=1
 pkgdesc='Local music player with history-aware shuffle'
 arch=('any')
@@ -7,16 +7,16 @@ url='https://github.com/luffy3006/entropy-player'
 license=('unknown')
 depends=('mpv' 'python' 'python-dbus-next' 'python-mutagen' 'python-mpv' 'python-pyqt6' 'python-textual' 'python-watchdog')
 makedepends=('python-build' 'python-installer' 'python-setuptools' 'python-wheel')
-source=("git+https://github.com/luffy3006/entropy-player.git#branch=main")
+source=("https://github.com/luffy3006/entropy-player/archive/refs/tags/v${pkgver}.tar.gz")
 sha256sums=('SKIP')
 
 build() {
-  cd "$srcdir/entropy-player"
+  cd "$srcdir/entropy-player-${pkgver}"
   python -m build --wheel --no-isolation
 }
 
 package() {
-  cd "$srcdir/entropy-player"
+  cd "$srcdir/entropy-player-${pkgver}"
   python -m installer --destdir="$pkgdir" dist/*.whl
   install -Dm644 packaging/linux/entropy-player.desktop \
     "$pkgdir/usr/share/applications/entropy-player.desktop"

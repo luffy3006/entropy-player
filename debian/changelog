@@ -1,3 +1,11 @@
+entropy-player (0.1.2-1) unstable; urgency=medium
+
+  * Harden mpv end-file handling and recover from repeated playback errors.
+  * Debounce volume settings writes and preserve unrelated preferences.
+  * Add Python matrix CI and release version consistency checks.
+
+ -- luffy3006 <mojoking4@gmail.com>  Tue, 27 Oct 2026 00:54:00 +0000
+
 entropy-player (0.1.1-1) unstable; urgency=medium
 
   * Fix automatic playback when mpv reports numeric end-file reasons.

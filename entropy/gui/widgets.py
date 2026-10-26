@@ -176,8 +176,12 @@ class TrackTable(QTableWidget):
             for column in range(self.columnCount()):
                 cell = self.item(row, column)
                 if cell is not None:
-                    cell.setBackground(QColor("#254a36") if is_current else QColor())
-                    cell.setForeground(QColor("#d7f3a1") if is_current else QColor())
+                    if is_current:
+                        cell.setBackground(QColor("#254a36"))
+                        cell.setForeground(QColor("#d7f3a1"))
+                    else:
+                        cell.setData(Qt.ItemDataRole.BackgroundRole, None)
+                        cell.setData(Qt.ItemDataRole.ForegroundRole, None)
 
 
 class WaveformWidget(QWidget):

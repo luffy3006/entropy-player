@@ -1,3 +1,5 @@
 """Entropy Player: a local music player with history-aware shuffle."""
 
-__version__ = "0.1.1"
+from importlib.metadata import version
+
+__version__ = version("entropy-player")
