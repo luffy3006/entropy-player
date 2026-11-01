@@ -18,7 +18,10 @@ SUPPORTED_FORMATS = {".mp3", ".flac", ".ogg", ".wav", ".mp4", ".mkv"}
 class LibraryDatabase:
     def __init__(self, path: str | Path | None = None) -> None:
         if sys.platform == "win32":
-            config_home = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+            config_home = Path(
+                os.environ.get("XDG_CONFIG_HOME")
+                or os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")
+            )
             default_path = config_home / "EntropyPlayer" / "entropy.db"
         else:
             default_path = Path.home() / ".config" / "entropy" / "entropy.db"

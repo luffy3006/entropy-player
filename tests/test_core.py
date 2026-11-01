@@ -601,6 +601,16 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(stats["average_daily_skips"], 1.0)
         self.assertEqual(stats["most_skipped_song"]["title"], second.stem)
 
+    def test_windows_database_path_honors_xdg_override(self):
+        config_home = self.root / "windows-config"
+        with patch.dict("os.environ", {"XDG_CONFIG_HOME": str(config_home)}):
+            with patch("entropy.core.database.sys.platform", "win32"):
+                database = LibraryDatabase()
+        try:
+            self.assertEqual(database.path, config_home / "EntropyPlayer" / "entropy.db")
+        finally:
+            database.close()
+
 
 if __name__ == "__main__":
     unittest.main()

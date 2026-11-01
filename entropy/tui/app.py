@@ -6,6 +6,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.coordinate import Coordinate
+from textual.css.query import NoMatches
 from textual.widgets import DataTable, Footer, Header, Input, ProgressBar, Static
 from rich.text import Text
 
@@ -95,6 +96,12 @@ class EntropyTUI(App[None]):
     def refresh_view(self) -> None:
         if not self._refresh_active:
             return
+        try:
+            self._refresh_view()
+        except NoMatches:
+            return
+
+    def _refresh_view(self) -> None:
         tracks = self.controller.tracks()
         if self._query:
             tracks = [track for track in tracks if self._query in " ".join((track["title"], track["artist"], track["album"])).casefold()]
