@@ -23,7 +23,12 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _parser().parse_args()
-    mode = args.mode or ("gui" if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY") else "tui")
+    has_desktop = (
+        sys.platform in {"win32", "darwin"}
+        or os.environ.get("DISPLAY")
+        or os.environ.get("WAYLAND_DISPLAY")
+    )
+    mode = args.mode or ("gui" if has_desktop else "tui")
 
     from entropy.core.controller import PlayerController
     from entropy.core.database import LibraryDatabase

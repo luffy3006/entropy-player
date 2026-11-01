@@ -1,3 +1,10 @@
+entropy-player (0.1.3-1) unstable; urgency=medium
+
+  * Add session playback history navigation and listening statistics.
+  * Add Windows platform paths, CI coverage, and a release install archive.
+
+ -- luffy3006 <mojoking4@gmail.com>  Wed, 28 Oct 2026 00:00:00 +0000
+
 entropy-player (0.1.2-1) unstable; urgency=medium
 
   * Harden mpv end-file handling and recover from repeated playback errors.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import Any
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
@@ -78,6 +79,11 @@ class LibraryNavigation(QFrame):
         layout.addWidget(self.tree, 1)
         controls = QVBoxLayout()
         controls.setSpacing(6)
+        self.statistics_button = QPushButton("Listening statistics")
+        self.statistics_button.setObjectName("listeningStatistics")
+        self.statistics_button.setMinimumHeight(34)
+        self.statistics_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        controls.addWidget(self.statistics_button)
         self.add_folder_button = QPushButton("+  Add folder to playlist")
         self.add_folder_button.setObjectName("addWatchedFolder")
         self.add_folder_button.setMinimumHeight(36)
@@ -108,7 +114,7 @@ class LibraryNavigation(QFrame):
             item.setData(0, Qt.ItemDataRole.UserRole, ("playlist", int(playlist["id"]), playlist["name"]))
             self.playlists_item.addChild(item)
             for folder in playlist.get("folders", []):
-                name = folder.rstrip("/").rsplit("/", 1)[-1] or folder
+                name = Path(folder).name or folder
                 folder_item = QTreeWidgetItem([f"Folder · {name}"])
                 folder_item.setToolTip(0, f"Watched folder: {folder}")
                 folder_item.setData(0, Qt.ItemDataRole.UserRole, ("folder", folder, int(playlist["id"])))

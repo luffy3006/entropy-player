@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-python:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify tag and package version
+        run: |
+          python scripts/check_version.py
+          test "${GITHUB_REF_NAME}" = "v$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+      - name: Build Python distributions
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-distributions
+          path: dist/*
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify tag and package version
+        shell: pwsh
+        run: |
+          python scripts/check_version.py
+          $version = (python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])").Trim()
+          if ($env:GITHUB_REF_NAME -ne "v$version") { throw "Git tag and package version do not match." }
+      - name: Build Windows install archive
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade build
+          python -m build --wheel
+          Copy-Item packaging/windows/install.ps1 dist/
+          $version = (python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])").Trim()
+          $wheel = (Get-ChildItem dist -Filter "entropy_player-*.whl" | Select-Object -First 1).FullName
+          Compress-Archive -Path @($wheel, "$PWD\dist\install.ps1") -DestinationPath "dist/EntropyPlayer-Windows-$version.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-install-archive
+          path: dist/EntropyPlayer-Windows-*.zip
+
+  publish:
+    needs: [build-python, build-windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release-assets/*

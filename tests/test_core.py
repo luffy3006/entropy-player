@@ -539,6 +539,78 @@ class CoreTests(unittest.TestCase):
         first = next(row for row in self.database.get_tracks(include_excluded=True) if row["id"] == self.track_id)
         self.assertEqual(first["skip_count"], 1)
 
+    def test_previous_and_next_follow_session_playback_history(self):
+        track_ids = [self.track_id]
+        for index in range(2):
+            path = self.root / f"session-{index}.mp3"
+            path.write_bytes(b"ID3")
+            track_ids.append(self.database.add_track(path))
+        audio = FakeAudioBackend()
+        controller = PlayerController(database=self.database, audio=audio, watcher=FakeWatcher())
+
+        for track_id in track_ids:
+            controller.play_track(track_id)
+        controller.previous_track()
+        self.assertEqual(controller.current_id, track_ids[1])
+        controller.previous_track()
+        self.assertEqual(controller.current_id, track_ids[0])
+        played_count = len(audio.played)
+        controller.previous_track()
+        self.assertEqual(controller.current_id, track_ids[0])
+        self.assertEqual(len(audio.played), played_count)
+
+        controller.next_track()
+        self.assertEqual(controller.current_id, track_ids[1])
+        controller.next_track()
+        self.assertEqual(controller.current_id, track_ids[2])
+
+    def test_prequeued_eof_successor_is_part_of_session_history(self):
+        second = self.root / "session-successor.mp3"
+        second.write_bytes(b"ID3")
+        second_id = self.database.add_track(second)
+        audio = FakeAudioBackend()
+        controller = PlayerController(database=self.database, audio=audio, watcher=FakeWatcher())
+
+        controller.play_track(self.track_id)
+        audio.emit_end("eof")
+        self.assertEqual(controller.current_id, second_id)
+
+        controller.previous_track()
+        self.assertEqual(controller.current_id, self.track_id)
+
+    def test_statistics_summarize_plays_skips_and_playlist(self):
+        second = self.root / "stats-second.mp3"
+        second.write_bytes(b"ID3")
+        second_id = self.database.add_track(second)
+        playlist_id = self.database.create_playlist("Favorites")
+        self.database.add_to_playlist(playlist_id, self.track_id)
+        self.database.add_to_playlist(playlist_id, second_id)
+        with self.database._lock, self.database._connection:
+            self.database._connection.execute("UPDATE tracks SET duration = 180 WHERE id = ?", (self.track_id,))
+        self.database.record_play(self.track_id)
+        self.database.record_play(self.track_id)
+        self.database.record_skip(second_id, 12.0)
+
+        stats = self.database.get_statistics()
+
+        self.assertEqual(stats["total_plays"], 2)
+        self.assertEqual(stats["most_played_song"]["title"], self.track_path.stem)
+        self.assertEqual(stats["most_played_song"]["play_count"], 2)
+        self.assertAlmostEqual(stats["average_daily_listening_hours"], 0.1)
+        self.assertEqual(stats["favorite_playlist"]["name"], "Favorites")
+        self.assertEqual(stats["average_daily_skips"], 1.0)
+        self.assertEqual(stats["most_skipped_song"]["title"], second.stem)
+
+    def test_windows_database_path_honors_xdg_override(self):
+        config_home = self.root / "windows-config"
+        with patch.dict("os.environ", {"XDG_CONFIG_HOME": str(config_home)}):
+            with patch("entropy.core.database.sys.platform", "win32"):
+                database = LibraryDatabase()
+        try:
+            self.assertEqual(database.path, config_home / "entropy" / "entropy.db")
+        finally:
+            database.close()
+
 
 if __name__ == "__main__":
     unittest.main()

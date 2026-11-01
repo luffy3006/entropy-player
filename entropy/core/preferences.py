@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
 
 
 def _preferences_path() -> Path:
+    if sys.platform == "win32":
+        xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
+        if xdg_config_home:
+            return Path(xdg_config_home) / "entropy" / "settings.json"
+        config_home = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+        return config_home / "EntropyPlayer" / "settings.json"
     config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     return config_home / "entropy" / "settings.json"
 

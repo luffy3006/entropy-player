@@ -8,6 +8,20 @@ from entropy.core.preferences import load_volume, save_volume
 
 
 class VolumePreferenceTests(unittest.TestCase):
+    def test_windows_uses_roaming_appdata_for_preferences(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {"APPDATA": directory, "XDG_CONFIG_HOME": ""}
+        ):
+            with patch("entropy.core.preferences.sys.platform", "win32"):
+                save_volume(64)
+                self.assertEqual(
+                    load_volume(),
+                    64,
+                )
+            path = os.path.join(directory, "EntropyPlayer", "settings.json")
+            with open(path, encoding="utf-8") as settings:
+                self.assertEqual(json.load(settings)["volume"], 64)
+
     def test_volume_is_saved_and_restored_with_bounds(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"XDG_CONFIG_HOME": directory}):
             self.assertEqual(load_volume(37), 37)

@@ -17,11 +17,17 @@ entropy
 
 `entropy` and `entropy --gui` open the desktop interface when a display is available. On a headless session, plain `entropy` defaults to the terminal interface. Use `entropy --cli` or `entropy --tui` to request it explicitly.
 
+### Windows
+
+Windows is supported for both the PyQt6 desktop interface and the Textual terminal interface. Install Python 3.10 or newer and a Windows mpv build that includes `mpv-2.dll` (for example, from the [mpv Windows builds page](https://sourceforge.net/projects/mpv-player-windows/files/64bit/)). Extract the release archive from the [GitHub Releases page](https://github.com/luffy3006/entropy-player/releases), then run `install.ps1` in PowerShell. If the DLL is not in a standard install folder or on `PATH`, set `MPV_HOME` to the directory containing `mpv-2.dll` before running the installer. The installer creates a per-user Python installation and a Start Menu shortcut. The database and settings are stored under `%APPDATA%\EntropyPlayer`.
+
+To run from a source checkout instead, install the Python package with `py -m pip install .`, ensure the mpv DLL directory is on `PATH` or set `MPV_HOME`, then run `py -m entropy --gui` or `py -m entropy --cli`.
+
 ## Library
 
 Create a playlist, select it, then choose **Add folder to playlist** (or right-click that playlist and add a folder). Watched folders appear beneath their owning playlist and their tracks appear in that playlist view. Deleting a playlist stops watching its folders and removes its playlist membership, but leaves media files and library entries intact. Existing watched folders are migrated into an **Imported folders** playlist. The initial scan indexes `.mp3`, `.flac`, `.ogg`, `.wav`, `.mp4`, and `.mkv`; MP4 and MKV files play with their video stream disabled, as audio-only items. Tags are read when available, with the filename used as a title fallback. Excluding a track only hides it from normal library and shuffle views; it does not remove the file and the exclusion remains set if the file is scanned again.
 
-The SQLite database is stored at `~/.config/entropy/entropy.db`; the selected volume is saved in `~/.config/entropy/settings.json` and shared between the GUI and TUI. Play history records completed tracks. Skips are recorded only when the next-track action occurs before 30 seconds have elapsed.
+On Linux, the SQLite database and settings are stored under `~/.config/entropy/`; on Windows, they are stored under `%APPDATA%\EntropyPlayer`. The selected volume is shared between the GUI and TUI. Play history records completed tracks. Skips are recorded only when the next-track action occurs before 30 seconds have elapsed.
 
 ## Shuffle
 
@@ -68,11 +74,13 @@ Before publishing to an official distro repository, choose and add the project's
 
 ## Controls
 
-In the TUI, use `Up`/`Down` or `j`/`k` to move through the scrollable track list, `Enter` to play the selected row, `Space` to play or pause, `Left`/`Right` (or `h`/`l`) to seek, `-`/`+` to change volume, `n`/`p` for next and previous, `m` to mute, `/` to search, and `s` to switch shuffle mode. The playing track is highlighted in both interfaces. Press `Enter` in search to return keyboard focus to the track list.
+In the TUI, use `Up`/`Down` or `j`/`k` to move through the scrollable track list, `Enter` to play the selected row, `Space` to play or pause, `Left`/`Right` (or `h`/`l`) to seek, `-`/`+` to change volume, `n`/`p` for next and previous, `m` to mute, `/` to search, `s` to switch shuffle mode, and `i` to show listening statistics. Previous and Next navigate tracks played in the current app session; after moving backward, Next replays the already visited session history before selecting a new track. Previous stops at the first track played in that session. The playing track is highlighted in both interfaces. Press `Enter` in search to return keyboard focus to the track list.
 
 In the GUI, click or drag anywhere on the seek bar to set playback position and click or drag the volume bar to change volume, as in VLC. `Space` toggles play/pause, `Left`/`Right` seek backward/forward by five seconds, and `Up`/`Down` navigate the track table. Use `Ctrl`+`Up`/`Down` to raise or lower volume by five percent; those volume shortcuts also work when the track table is focused. These shortcuts do not intercept arrow keys or Space while editing search text. The GUI also supports track search, double-click playback, right-click track actions, and playlist deletion. On Linux, earphone and desktop media buttons use the MPRIS service. mpv queues the next selection for a gapless handoff when a track finishes.
 
 ## Development
+
+The v0.1.3 release adds session-scoped Previous/Next navigation, listening statistics in both interfaces, and Windows support with a tagged Windows install archive. Daily listening duration is estimated from completed-track durations; playlist popularity is estimated from completed plays of tracks currently belonging to each playlist.
 
 The v0.1.2 maintenance release hardens mpv end-file reason handling, prevents manual transitions from being counted as natural completions, limits consecutive playback-error recovery, and debounces volume preference writes. The Arch recipe now targets a versioned release archive.
 

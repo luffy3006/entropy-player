@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import sys
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Literal, Protocol
 
 EndFileReason = Literal["eof", "stop", "quit", "error", "redirect", "unknown"]
@@ -77,6 +80,12 @@ class AudioEngine(AudioBackend):
         audio_output: str | None = None,
         video_output: str | None = None,
     ) -> None:
+        self._dll_directory_handle: Any = None
+        if sys.platform == "win32":
+            mpv_home = os.environ.get("MPV_HOME")
+            if mpv_home and (Path(mpv_home) / "mpv-2.dll").is_file():
+                self._dll_directory_handle = os.add_dll_directory(mpv_home)
+                os.environ["PATH"] = mpv_home + os.pathsep + os.environ.get("PATH", "")
         try:
             import mpv
         except ImportError as exc:
