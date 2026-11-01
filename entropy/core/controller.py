@@ -7,6 +7,7 @@ import random
 import sys
 import threading
 from collections import deque
+from pathlib import Path
 from typing import Any
 
 from entropy.core.audio import AudioBackend, AudioEngine, normalize_end_reason
@@ -364,14 +365,15 @@ class PlayerController:
 
     def playlist_tracks(self, playlist_id: int) -> list[dict[str, Any]]:
         rows = self.database.get_playlist_tracks(playlist_id)
-        folder_prefixes = [path.rstrip("/") + "/" for path in self.database.get_playlist_folders(playlist_id)]
-        if folder_prefixes:
+        folders = [Path(path).resolve() for path in self.database.get_playlist_folders(playlist_id)]
+        if folders:
             known_ids = {int(row["id"]) for row in rows}
-            rows.extend(
-                row for row in self.database.get_tracks()
-                if int(row["id"]) not in known_ids
-                and any(row["filepath"].startswith(prefix) for prefix in folder_prefixes)
-            )
+            for row in self.database.get_tracks():
+                filepath = Path(str(row["filepath"])).resolve()
+                if int(row["id"]) not in known_ids and any(
+                    filepath == folder or folder in filepath.parents for folder in folders
+                ):
+                    rows.append(row)
         for row in rows:
             row["weight"] = track_weight(row)
         percentages = weight_percentages(rows)

@@ -328,8 +328,11 @@ class EntropyWindow(QMainWindow):
         elif self._view == "playlist" and self._active_playlist_id is not None:
             tracks = self.controller.playlist_tracks(self._active_playlist_id)
         elif self._view == "folder" and self._active_folder:
-            prefix = str(Path(self._active_folder).resolve()) + "/"
-            tracks = [track for track in tracks if track["filepath"] == self._active_folder or track["filepath"].startswith(prefix)]
+            folder = Path(self._active_folder).resolve()
+            tracks = [
+                track for track in tracks
+                if (filepath := Path(str(track["filepath"])).resolve()) == folder or folder in filepath.parents
+            ]
         query = self.search.text().strip().casefold()
         if query:
             tracks = [track for track in tracks if query in " ".join((track["title"], track["artist"], track["album"])).casefold()]
