@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import sys
 import threading
 import time
+from collections import Counter, defaultdict
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +17,11 @@ SUPPORTED_FORMATS = {".mp3", ".flac", ".ogg", ".wav", ".mp4", ".mkv"}
 
 class LibraryDatabase:
     def __init__(self, path: str | Path | None = None) -> None:
-        default_path = Path.home() / ".config" / "entropy" / "entropy.db"
+        if sys.platform == "win32":
+            config_home = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+            default_path = config_home / "EntropyPlayer" / "entropy.db"
+        else:
+            default_path = Path.home() / ".config" / "entropy" / "entropy.db"
         self.path = Path(path).expanduser() if path else default_path
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
@@ -206,6 +213,84 @@ class LibraryDatabase:
                 (max(0, limit),),
             ).fetchall()
         return [int(row["track_id"]) for row in rows]
+
+    def get_statistics(self) -> dict[str, Any]:
+        with self._lock:
+            play_rows = self._connection.execute(
+                """SELECT h.track_id, h.timestamp, t.title, t.artist, t.duration
+                   FROM play_history h JOIN tracks t ON t.id = h.track_id"""
+            ).fetchall()
+            skip_rows = self._connection.execute(
+                """SELECT s.track_id, s.timestamp, t.title, t.artist
+                   FROM skips s JOIN tracks t ON t.id = s.track_id"""
+            ).fetchall()
+
+        play_counts = Counter(int(row["track_id"]) for row in play_rows)
+        skip_counts = Counter(int(row["track_id"]) for row in skip_rows)
+
+        def song_summary(counts: Counter[int]) -> dict[str, Any] | None:
+            if not counts:
+                return None
+            track_id, count = counts.most_common(1)[0]
+            source_rows, count_key = (
+                (play_rows, "play_count") if counts is play_counts else (skip_rows, "skip_count")
+            )
+            row = next(row for row in source_rows if int(row["track_id"]) == track_id)
+            return {
+                "title": str(row["title"]),
+                "artist": str(row["artist"]),
+                count_key: count,
+            }
+
+        daily_seconds: defaultdict[date, float] = defaultdict(float)
+        hour_counts: Counter[int] = Counter()
+        for row in play_rows:
+            played_at = datetime.fromtimestamp(float(row["timestamp"]))
+            daily_seconds[played_at.date()] += max(0.0, float(row["duration"]))
+            hour_counts[played_at.hour] += 1
+
+        average_daily_hours = (
+            sum(daily_seconds.values()) / len(daily_seconds) / 3600.0 if daily_seconds else 0.0
+        )
+        total_skips = len(skip_rows)
+        timestamps = [float(row["timestamp"]) for row in (*play_rows, *skip_rows)]
+        if timestamps:
+            first_day = datetime.fromtimestamp(min(timestamps)).date()
+            elapsed_days = max(1, (date.today() - first_day).days + 1)
+        else:
+            elapsed_days = 0
+        average_daily_skips = total_skips / elapsed_days if elapsed_days else 0.0
+
+        track_play_counts = Counter(play_counts)
+        playlists = self.get_playlists()
+        all_tracks = self.get_tracks(include_excluded=True)
+        favorite_playlist: dict[str, Any] | None = None
+        for playlist in playlists:
+            playlist_id = int(playlist["id"])
+            member_ids = {int(track["id"]) for track in self.get_playlist_tracks(playlist_id, include_excluded=True)}
+            folders = [Path(folder).resolve() for folder in self.get_playlist_folders(playlist_id)]
+            for track in all_tracks:
+                filepath = Path(str(track["filepath"])).resolve()
+                if any(filepath == folder or folder in filepath.parents for folder in folders):
+                    member_ids.add(int(track["id"]))
+            playlist_plays = sum(track_play_counts[track_id] for track_id in member_ids)
+            if playlist_plays and (
+                favorite_playlist is None or playlist_plays > favorite_playlist["play_count"]
+            ):
+                favorite_playlist = {"name": str(playlist["name"]), "play_count": playlist_plays}
+
+        return {
+            "total_plays": len(play_rows),
+            "total_skips": total_skips,
+            "most_played_song": song_summary(play_counts),
+            "average_daily_listening_hours": average_daily_hours,
+            "most_common_play_hour": hour_counts.most_common(1)[0][0] if hour_counts else None,
+            "favorite_playlist": favorite_playlist,
+            "average_daily_skips": average_daily_skips,
+            "most_skipped_song": song_summary(skip_counts),
+            "active_play_days": len(daily_seconds),
+            "skip_average_days": elapsed_days,
+        }
 
     def add_watched_folder(self, folder: str | Path, playlist_id: int) -> str:
         path = str(Path(folder).expanduser().resolve())

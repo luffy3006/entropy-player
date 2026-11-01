@@ -271,6 +271,9 @@ class EntropyWindow(QMainWindow):
             self.navigation.select_playlist(None)
             self.controller.set_shuffle_playlist(None)
             self.page_title.setText("EXCLUDED TRACKS")
+        elif target == "statistics":
+            self._show_statistics()
+            return
         elif isinstance(target, tuple) and target[0] == "folder":
             self._view, self._active_folder, self._active_playlist_id = "folder", target[1], target[2]
             self.navigation.select_playlist(target[2])
@@ -288,6 +291,36 @@ class EntropyWindow(QMainWindow):
         else:
             self.navigation.select_playlist(None)
         self._render_tracks()
+
+    def _show_statistics(self) -> None:
+        stats = self.controller.statistics()
+        most_played = stats["most_played_song"]
+        most_skipped = stats["most_skipped_song"]
+        playlist = stats["favorite_playlist"]
+        peak_hour = stats["most_common_play_hour"]
+
+        def song_label(song: dict[str, Any] | None, count_key: str, unit: str) -> str:
+            if song is None:
+                return "No data"
+            return f"{song['title']} - {song['artist']} ({song[count_key]} {unit})"
+        peak_time = f"{peak_hour:02d}:00-{(peak_hour + 1) % 24:02d}:00" if peak_hour is not None else "No data"
+        playlist_label = (
+            f"{playlist['name']} ({playlist['play_count']} completed plays)"
+            if playlist is not None else "No data"
+        )
+        message = "\n".join(
+            (
+                f"Completed plays: {stats['total_plays']}",
+                f"Most played: {song_label(most_played, 'play_count', 'plays')}",
+                f"Total skips: {stats['total_skips']}",
+                f"Estimated listening time per active play day: {stats['average_daily_listening_hours']:.2f} hours",
+                f"Most common local start time: {peak_time}",
+                f"Favorite playlist by member-track plays (estimate): {playlist_label}",
+                f"Average skips per day since first recorded activity: {stats['average_daily_skips']:.2f}",
+                f"Most skipped: {song_label(most_skipped, 'skip_count', 'skips')}",
+            )
+        )
+        QMessageBox.information(self, "Listening statistics", message)
 
     def _render_tracks(self) -> None:
         include_excluded = self._view == "excluded"

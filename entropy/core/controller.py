@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import random
+import sys
 import threading
 from collections import deque
 from typing import Any
@@ -29,11 +30,15 @@ class PlayerController:
         self.current_id: int | None = None
         self._forced_next: int | None = None
         self._queued_id: int | None = None
+        self._queued_history_index: int | None = None
+        self._session_history: list[int] = []
+        self._session_history_index = -1
         self._recent_ids: deque[int] = deque(reversed(self.database.recent_played_track_ids()), maxlen=12)
         self._shuffle_playlist_id: int | None = None
         self._lock = threading.RLock()
         self._listeners: list[Any] = []
         self.audio: AudioBackend = audio or AudioEngine(self._on_end_file)
+        self.mpris_enabled = sys.platform != "win32"
         self.audio.set_end_callback(self._on_end_file)
         self.audio.set_file_loaded_callback(self._on_file_loaded)
         self.audio.volume = load_volume(self.audio.volume)
@@ -92,20 +97,19 @@ class PlayerController:
             self._start_track(track)
         self._notify()
 
-    def _start_track(self, track: dict[str, Any]) -> None:
+    def _start_track(self, track: dict[str, Any], history_index: int | None = None) -> None:
         self.current_id = int(track["id"])
         self._queued_id = None
+        self._queued_history_index = None
+        if history_index is None:
+            if self._session_history_index + 1 < len(self._session_history):
+                del self._session_history[self._session_history_index + 1:]
+            self._session_history.append(self.current_id)
+            self._session_history_index = len(self._session_history) - 1
+        else:
+            self._session_history_index = history_index
         self.audio.play(track["filepath"])
-        candidates = self._shuffle_candidates()
-        if candidates:
-            queued = self._choose_successor(candidates, self.current_id)
-            if queued is not None:
-                try:
-                    self.audio.queue_next(queued["filepath"])
-                except (OSError, RuntimeError):
-                    logger.debug("Could not queue next track", exc_info=True)
-                    return
-                self._queued_id = int(queued["id"])
+        self._queue_current_successor()
 
     def play_pause(self) -> None:
         if self.current_id is None:
@@ -134,6 +138,7 @@ class PlayerController:
         with self._lock:
             self.current_id = None
             self._queued_id = None
+            self._queued_history_index = None
             self._consecutive_errors = 0
         self.audio.stop()
         self._notify()
@@ -156,6 +161,12 @@ class PlayerController:
                     self._start_track(track)
                     self._notify()
                 return
+            next_entry = self._find_session_history_entry(1)
+            if next_entry is not None:
+                history_index, track = next_entry
+                self._start_track(track, history_index=history_index)
+                self._notify()
+                return
             tracks = self._shuffle_candidates()
             if not tracks:
                 self.current_id = None
@@ -169,11 +180,24 @@ class PlayerController:
     def previous_track(self) -> None:
         with self._lock:
             self._consecutive_errors = 0
-        tracks = self.database.get_tracks()
-        if not tracks:
-            return
-        current_index = next((i for i, row in enumerate(tracks) if row["id"] == self.current_id), 0)
-        self.play_track(int(tracks[(current_index - 1) % len(tracks)]["id"]))
+            previous_entry = self._find_session_history_entry(-1)
+            if previous_entry is None:
+                return
+            history_index, track = previous_entry
+            if self.current_id is not None and self.current_id != int(track["id"]):
+                self.database.record_skip(self.current_id, self.audio.time_pos)
+                self._remember_recent(self.current_id)
+            self._start_track(track, history_index=history_index)
+        self._notify()
+
+    def _find_session_history_entry(self, direction: int) -> tuple[int, dict[str, Any]] | None:
+        index = self._session_history_index + direction
+        while 0 <= index < len(self._session_history):
+            track = self.database.get_track(self._session_history[index])
+            if track is not None and not track["is_excluded"]:
+                return index, track
+            index += direction
+        return None
 
     def force_play_next(self, track_id: int) -> None:
         self._forced_next = track_id
@@ -198,6 +222,7 @@ class PlayerController:
                 self._remember_recent(failed_id)
                 self.current_id = None
                 self._queued_id = None
+                self._queued_history_index = None
                 if self._consecutive_errors >= self.MAX_CONSECUTIVE_AUDIO_ERRORS:
                     self.audio.stop()
                     should_advance = False
@@ -222,6 +247,14 @@ class PlayerController:
             self._remember_recent(finished_id)
             if self._queued_id is not None:
                 self.current_id, self._queued_id = self._queued_id, None
+                if self._queued_history_index is None:
+                    if self._session_history_index + 1 < len(self._session_history):
+                        del self._session_history[self._session_history_index + 1:]
+                    self._session_history.append(self.current_id)
+                    self._session_history_index = len(self._session_history) - 1
+                else:
+                    self._session_history_index = self._queued_history_index
+                self._queued_history_index = None
                 next_track_queued = True
             else:
                 next_track_queued = False
@@ -240,8 +273,13 @@ class PlayerController:
         with self._lock:
             if self.current_id is None:
                 return
-            candidates = self._shuffle_candidates()
-            queued = self._choose_successor(candidates, self.current_id)
+            history_entry = self._find_session_history_entry(1)
+            if history_entry is not None:
+                history_index, queued = history_entry
+            else:
+                history_index = None
+                candidates = self._shuffle_candidates()
+                queued = self._choose_successor(candidates, self.current_id)
             if queued is not None:
                 try:
                     self.audio.queue_next(queued["filepath"])
@@ -249,6 +287,10 @@ class PlayerController:
                     logger.debug("Could not queue successor track", exc_info=True)
                     return
                 self._queued_id = int(queued["id"])
+                self._queued_history_index = history_index
+
+    def statistics(self) -> dict[str, Any]:
+        return self.database.get_statistics()
 
     def _choose_successor(self, tracks: list[dict[str, Any]], current_id: int | None) -> dict[str, Any] | None:
         recent_ids = tuple(self._recent_ids)

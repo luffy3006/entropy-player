@@ -46,6 +46,7 @@ class EntropyTUI(App[None]):
         Binding("/", "focus_search", "Search"),
         Binding("escape", "focus_library", "Library", show=False),
         Binding("s", "toggle_shuffle", "Shuffle"),
+        Binding("i", "show_statistics", "Statistics"),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -132,7 +133,7 @@ class EntropyTUI(App[None]):
         progress = self.query_one("#progress", ProgressBar)
         duration = state["duration"]
         progress.update(total=max(1, int(duration)), progress=min(int(state["position"]), int(duration)) if duration else 0)
-        status = f"{len(tracks)} tracks  |  {format_time(state['position'])} / {format_time(duration)}  |  Space play/pause  Left/Right seek  -/+ volume  n next  / search"
+        status = f"{len(tracks)} tracks  |  {format_time(state['position'])} / {format_time(duration)}  |  Space play/pause  Left/Right seek  -/+ volume  n next  i stats  / search"
         self.query_one("#status", Static).update(status)
 
     @staticmethod
@@ -195,6 +196,39 @@ class EntropyTUI(App[None]):
         mode = "standard" if self.controller.shuffle_mode == "entropy" else "entropy"
         self.controller.set_shuffle_mode(mode)
         self.notify(f"{mode.title()} shuffle")
+
+    def action_show_statistics(self) -> None:
+        stats = self.controller.statistics()
+        most_played = stats["most_played_song"]
+        most_skipped = stats["most_skipped_song"]
+        playlist = stats["favorite_playlist"]
+        peak_hour = stats["most_common_play_hour"]
+        most_played_label = (
+            f"{most_played['title']} - {most_played['artist']} ({most_played['play_count']} plays)"
+            if most_played else "No data"
+        )
+        most_skipped_label = (
+            f"{most_skipped['title']} - {most_skipped['artist']} ({most_skipped['skip_count']} skips)"
+            if most_skipped else "No data"
+        )
+        peak_time = f"{peak_hour:02d}:00" if peak_hour is not None else "No data"
+        favorite = f"{playlist['name']} ({playlist['play_count']} plays)" if playlist else "No data"
+        self.notify(
+            "\n".join(
+                (
+                    "Listening statistics",
+                    f"Completed plays: {stats['total_plays']}",
+                    f"Total skips: {stats['total_skips']}",
+                    f"Most played: {most_played_label}",
+                    f"Estimated hours per active play day: {stats['average_daily_listening_hours']:.2f}",
+                    f"Peak local start hour: {peak_time}",
+                    f"Favorite playlist estimate: {favorite}",
+                    f"Average skips per day: {stats['average_daily_skips']:.2f}",
+                    f"Most skipped: {most_skipped_label}",
+                )
+            ),
+            timeout=15,
+        )
 
     def on_unmount(self) -> None:
         self._refresh_active = False
