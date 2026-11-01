@@ -12,10 +12,10 @@ from typing import Any
 
 def _preferences_path() -> Path:
     if sys.platform == "win32":
-        config_home = Path(
-            os.environ.get("XDG_CONFIG_HOME")
-            or os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")
-        )
+        xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
+        if xdg_config_home:
+            return Path(xdg_config_home) / "entropy" / "settings.json"
+        config_home = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
         return config_home / "EntropyPlayer" / "settings.json"
     config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     return config_home / "entropy" / "settings.json"

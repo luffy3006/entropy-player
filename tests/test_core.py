@@ -607,7 +607,7 @@ class CoreTests(unittest.TestCase):
             with patch("entropy.core.database.sys.platform", "win32"):
                 database = LibraryDatabase()
         try:
-            self.assertEqual(database.path, config_home / "EntropyPlayer" / "entropy.db")
+            self.assertEqual(database.path, config_home / "entropy" / "entropy.db")
         finally:
             database.close()
 

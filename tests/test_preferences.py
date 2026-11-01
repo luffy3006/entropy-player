@@ -9,7 +9,9 @@ from entropy.core.preferences import load_volume, save_volume
 
 class VolumePreferenceTests(unittest.TestCase):
     def test_windows_uses_roaming_appdata_for_preferences(self):
-        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"APPDATA": directory}):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {"APPDATA": directory, "XDG_CONFIG_HOME": ""}
+        ):
             with patch("entropy.core.preferences.sys.platform", "win32"):
                 save_volume(64)
                 self.assertEqual(
