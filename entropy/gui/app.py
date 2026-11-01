@@ -99,6 +99,7 @@ class EntropyWindow(QMainWindow):
         self.navigation.tree.itemClicked.connect(self._navigate)
         self.navigation.add_folder_button.clicked.connect(self._choose_folder)
         self.navigation.add_playlist_button.clicked.connect(self._create_playlist)
+        self.navigation.statistics_button.clicked.connect(self._show_statistics)
         self.navigation.reset_shuffle_button.clicked.connect(self._reset_shuffle_history)
         self.search.textChanged.connect(self._render_tracks)
         self.theme_selector.currentTextChanged.connect(self._change_theme)
@@ -271,9 +272,6 @@ class EntropyWindow(QMainWindow):
             self.navigation.select_playlist(None)
             self.controller.set_shuffle_playlist(None)
             self.page_title.setText("EXCLUDED TRACKS")
-        elif target == "statistics":
-            self._show_statistics()
-            return
         elif isinstance(target, tuple) and target[0] == "folder":
             self._view, self._active_folder, self._active_playlist_id = "folder", target[1], target[2]
             self.navigation.select_playlist(target[2])
